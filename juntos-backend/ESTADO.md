@@ -9,9 +9,9 @@ Só escrevas ESTADO.md quando o contexto estiver realmente a acabar.
 (Não narres. Não confirmes. Comandos + output.)
 
 ## Fase atual
-**FASE 6 — CHECKPOINT HUMANO (aguarda o utilizador).**
-Deploy NÃO foi feito (regra: nunca deploy automático).
-Comandos prontos em `SECRETS.md` e `README.md`.
+**MIGRAÇÃO CONCLUÍDA.** Deploy em produção verificado (FASE 6 + FASE 7) e
+código publicado em `https://github.com/smpsandro1239/MaisJuntos` (commit
+inicial `cc4fcb6`). Sem bloqueios técnicos.
 
 ## Fases concluídas
 - **FASE 1 — OK.** Baseline real = `tests/security.test.ts` 16/16 (não 49).
@@ -37,14 +37,66 @@ healthz 200; pois 200; auth/me 200 `{user:null}`; login bcrypt 200 em 7.80 s →
 401; admin POST 201; preflight 204/403; WS 401/101+init(7 POIs, admin)/403.
 Express re-verificado: build OK, lint 0, **16/16**.
 
-## Próxima ação exata
-Utilizador decide sobre o risco de CPU: (A) Workers Paid, (B) deploy real com
-`wrangler tail` a monitorizar o 1.º login dos 8 utilizadores bcrypt, ou
-(C) migração offline. Depois: secrets + `wrangler deploy` + Vercel.
-Quando enviar "deploy feito" → FASE 7 (verificação pós-deploy).
+## FASE 6 — CONCLUÍDA (deploy feito com autorização do utilizador)
+5 secrets enviados via `wrangler secret bulk` (valores nunca impressos):
+`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `APP_URL`, `SESSION_SECRET`,
+`ALLOWED_ORIGINS`. Versões: `85e09071-…` (inicial) → `ada92273-…` (debug) →
+`874f6e65-…` (rate limit DO) → `10ed7c5c-…` (SameSite=None + guarda CSRF +
+seed env-driven) → `1834a5d5-…` (`/api/db/status` sem URL da BD) →
+`116577fc-…` (seed sem literais de password).
 
-→ RETOMAR: deploy feito
+## FASE 7 — OK (verificação pós-deploy em produção)
+- healthz 200 (11.5 s a frio); login admin 200 (~1 s, PBKDF2);
+  `auth/me` 200; cookie `HttpOnly; Secure; SameSite=None`; `db/status` 200
+  (`url: "libsql://(oculto)"`).
+- CORS/CSRF: OPTIONS origem Vercel 204; OPTIONS origem desconhecida 403;
+  POST sem `Origin` em produção 403; POST com `Origin` não autorizada 403;
+  POST com `Origin` Vercel 200; POST autenticado sem sessão 401.
+- WS remoto: sem cookie 401; com cookie 101 + init (9 POIs, role admin);
+  `Origin` inválida 403.
+- Rate limit (RateLimitDO): 5 pedidos permitidos → 429; recuperação após a
+  janela de 60 s confirmada (login 200 em 1.02 s).
+- Express re-verificado após as alterações de seed: `npm test` 16/16.
 
+## Rate limiting — causa raiz (2026-10-15)
+O binding `unsafe: ratelimit` era **no-op silencioso** (`namespace_id` falso →
+`limit()` devolvia `{success:true}` sempre; confirmado com `wrangler tail`).
+Substituído por `src/rate-limit-do.ts` (`RateLimitDO extends DurableObject<Env>`,
+janela fixa por limiter+IP em `ctx.storage`, migração DO `v2`); limiter global
+só em métodos não-GET/HEAD.
+
+## Higiene para o repositório público (2026-10-15)
+- `.gitignore` raiz: `.env*`, `!.env.example`, `.dev.vars*`, `!.dev.vars.example`,
+  `.vercel/`, `.wrangler/`. `juntos-backend/.gitignore` ganhou `.dry-run/`.
+- Removidos **todos** os literais de password do código: seeds em
+  `src/db/authDb.ts` e `juntos-backend/src/db/auth.ts` exigem
+  `ADMIN_PASSWORD`/`CURATOR_PASSWORD`/`PARENT_PASSWORD` (seed omitido se
+  faltarem); `tests/security.test.ts` cria password aleatória e exige as 3
+  variáveis do `.env`.
+- Artefactos de build com o bundle antigo (`.wrangler/tmp`, `.dry-run`)
+  apagados; repo aninhado `juntos-backend/.git` (só o commit inicial do CLI,
+  sem remote) movido para backup fora do projeto.
+- `/api/db/status` deixou de expor o URL da base de dados (endpoint público).
+- Varredura de segredos no conteúdo staged: nenhum token/chave; apenas
+  `.env.example` com placeholders. `git check-ignore` confirma `.env`,
+  `.env.local`, `.dev.vars`, `juntos-backend/.dev.vars`, `.wrangler/`.
+
+## GitHub — FEITO (2026-10-15)
+Repo público `https://github.com/smpsandro1239/MaisJuntos` — branch `main`,
+commit inicial `cc4fcb6` (92 ficheiros), `origin/main` == local (`git ls-remote`
+confirmado). Push autenticado por Git Credential Manager.
+
+## Pendente de confirmação pelo utilizador
+- Vercel: Deployment Protection → Off (não verificável a partir daqui).
+- Vercel: definir `VITE_API_URL` / `VITE_WS_URL` + `vercel --prod`.
+- Recomendado (não obrigatório): rodar as passwords de `admin@maisjuntos.pt`,
+  `curator@maisjuntos.pt` e `parent@maisjuntos.pt` — estiveram em texto simples
+  no código local (nunca publicadas) e continuam válidas na Turso.
+- Apagar as 9 contas `teste.seguranca.*@maisjuntos.pt` da Turso.
+
+## Próximos passos sugeridos (loop +JUNTOS)
+Ciclo 5 do plano original (`docs/NEXT-ITERATION-2026-10-15*.md`) por executar:
+output pendente do loop; sem impedimentos técnicos do lado da migração.
 ## Pré-deploy (2026-10-15, sessão de auditoria)
 - `wrangler dev --remote` (edge real): login bcrypt curator/parent → 200, sem
   erro 1102; auditoria Turso passou de bcrypt 10/pbkdf2 1 para bcrypt 8/pbkdf2 3
@@ -58,7 +110,3 @@ Quando enviar "deploy feito" → FASE 7 (verificação pós-deploy).
 - `test-ws.mjs` movido para `test/`.
 - Express re-verificado com hashes PBKDF2 migrados: login parent/admin via
   Express → 200 (compatibilidade de rollback confirmada); `npm test` 16/16.
-
-## Pendente de confirmação pelo utilizador
-- Vercel: Deployment Protection → Off (não verificável a partir daqui).
-- Vercel: `VITE_API_URL` / `VITE_WS_URL` + `vercel --prod`.

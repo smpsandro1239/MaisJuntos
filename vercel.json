@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://juntos-backend.smpsandro1239.workers.dev/api/:path*"
+    }
+  ]
+}

@@ -1,0 +1,223 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+:root {
+  --primary: #006067;
+  --on-primary: #ffffff;
+  --primary-container: #147a82;
+  --on-primary-container: #cefaff;
+  --primary-fixed: #9bf0f9;
+  --primary-fixed-dim: #7fd4dc;
+  --on-primary-fixed: #002022;
+  --on-primary-fixed-variant: #004f55;
+
+  --secondary: #b5260b;
+  --on-secondary: #ffffff;
+  --secondary-container: #fc593a;
+  --on-secondary-container: #580900;
+  --secondary-fixed: #ffdad3;
+  --secondary-fixed-dim: #ffb4a5;
+  --on-secondary-fixed: #3e0400;
+  --on-secondary-fixed-variant: #8e1500;
+
+  --tertiary: #725000;
+  --on-tertiary: #ffffff;
+  --tertiary-container: #916700;
+  --on-tertiary-container: #fff1de;
+  --tertiary-fixed: #ffdea9;
+  --tertiary-fixed-dim: #ffba27;
+  --on-tertiary-fixed: #271900;
+  --on-tertiary-fixed-variant: #5e4100;
+
+  --surface: #fbf9f6;
+  --on-surface: #1b1c1a;
+  --on-surface-variant: #3e494a;
+  --surface-dim: #dbdad7;
+  --surface-bright: #fbf9f6;
+  --surface-variant: #e4e2df;
+
+  --surface-container-lowest: #ffffff;
+  --surface-container-low: #f5f3f0;
+  --surface-container: #efeeeb;
+  --surface-container-high: #eae8e5;
+  --surface-container-highest: #e4e2df;
+
+  --inverse-surface: #30312f;
+  --inverse-on-surface: #f2f0ed;
+  --inverse-primary: #7fd4dc;
+
+  --outline: #6e797a;
+  --outline-variant: #bec9ca;
+  --error: #ba1a1a;
+  --on-error: #ffffff;
+  --error-container: #ffdad6;
+  --on-error-container: #93000a;
+}
+
+.dark {
+  --primary: #7fd4dc;
+  --on-primary: #00363b;
+  --primary-container: #004f55;
+  --on-primary-container: #9bf0f9;
+  --primary-fixed: #1e3c40;
+  --primary-fixed-dim: #132b2e;
+  --on-primary-fixed: #9bf0f9;
+  --on-primary-fixed-variant: #7fd4dc;
+
+  --secondary: #ffb4a5;
+  --on-secondary: #580900;
+  --secondary-container: #8e1500;
+  --on-secondary-container: #ffdad3;
+  --secondary-fixed: #4d120a;
+  --secondary-fixed-dim: #380a04;
+  --on-secondary-fixed: #ffdad3;
+  --on-secondary-fixed-variant: #ffb4a5;
+
+  --tertiary: #ffba27;
+  --on-tertiary: #3c2a00;
+  --tertiary-container: #5e4100;
+  --on-tertiary-container: #ffdea9;
+  --tertiary-fixed: #3d2f10;
+  --tertiary-fixed-dim: #291e05;
+  --on-tertiary-fixed: #ffdea9;
+  --on-tertiary-fixed-variant: #ffba27;
+
+  --surface: #121414;
+  --on-surface: #e2e3e0;
+  --on-surface-variant: #c1c7c7;
+  --surface-dim: #101212;
+  --surface-bright: #1c1f1f;
+  --surface-variant: #282c2c;
+
+  --surface-container-lowest: #181b1b;
+  --surface-container-low: #1d2020;
+  --surface-container: #222626;
+  --surface-container-high: #2a2e2e;
+  --surface-container-highest: #333838;
+
+  --inverse-surface: #e2e3e0;
+  --inverse-on-surface: #1b1c1a;
+  --inverse-primary: #006067;
+
+  --outline: #889394;
+  --outline-variant: #3e494a;
+  --error: #ffb4ab;
+  --on-error: #690005;
+  --error-container: #93000a;
+  --on-error-container: #ffdad6;
+}
+
+@theme {
+  --font-headline: 'Outfit', sans-serif;
+  --font-headline-xl: 'Outfit', sans-serif;
+  --font-headline-lg: 'Outfit', sans-serif;
+  --font-headline-md: 'Outfit', sans-serif;
+  --font-headline-sm: 'Outfit', sans-serif;
+  --font-body: 'Be Vietnam Pro', sans-serif;
+  --font-body-lg: 'Be Vietnam Pro', sans-serif;
+  --font-body-md: 'Be Vietnam Pro', sans-serif;
+  --font-body-sm: 'Be Vietnam Pro', sans-serif;
+  --font-label-lg: 'Be Vietnam Pro', sans-serif;
+  --font-label-md: 'Be Vietnam Pro', sans-serif;
+  --font-label-sm: 'Be Vietnam Pro', sans-serif;
+
+  --color-primary: var(--primary);
+  --color-primary-container: var(--primary-container);
+  --color-on-primary: var(--on-primary);
+  --color-on-primary-container: var(--on-primary-container);
+  --color-primary-fixed: var(--primary-fixed);
+  --color-primary-fixed-dim: var(--primary-fixed-dim);
+  --color-on-primary-fixed: var(--on-primary-fixed);
+  --color-on-primary-fixed-variant: var(--on-primary-fixed-variant);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-container: var(--secondary-container);
+  --color-on-secondary: var(--on-secondary);
+  --color-on-secondary-container: var(--on-secondary-container);
+  --color-secondary-fixed: var(--secondary-fixed);
+  --color-secondary-fixed-dim: var(--secondary-fixed-dim);
+  --color-on-secondary-fixed: var(--on-secondary-fixed);
+  --color-on-secondary-fixed-variant: var(--on-secondary-fixed-variant);
+
+  --color-tertiary: var(--tertiary);
+  --color-tertiary-container: var(--tertiary-container);
+  --color-on-tertiary: var(--on-tertiary);
+  --color-on-tertiary-container: var(--on-tertiary-container);
+  --color-tertiary-fixed: var(--tertiary-fixed);
+  --color-tertiary-fixed-dim: var(--tertiary-fixed-dim);
+  --color-on-tertiary-fixed: var(--on-tertiary-fixed);
+  --color-on-tertiary-fixed-variant: var(--on-tertiary-fixed-variant);
+
+  --color-surface: var(--surface);
+  --color-on-surface: var(--on-surface);
+  --color-on-surface-variant: var(--on-surface-variant);
+  --color-surface-dim: var(--surface-dim);
+  --color-surface-bright: var(--surface-bright);
+  --color-surface-variant: var(--surface-variant);
+
+  --color-surface-container-lowest: var(--surface-container-lowest);
+  --color-surface-container-low: var(--surface-container-low);
+  --color-surface-container: var(--surface-container);
+  --color-surface-container-high: var(--surface-container-high);
+  --color-surface-container-highest: var(--surface-container-highest);
+
+  --color-inverse-surface: var(--inverse-surface);
+  --color-inverse-on-surface: var(--inverse-on-surface);
+  --color-inverse-primary: var(--inverse-primary);
+
+  --color-outline: var(--outline);
+  --color-outline-variant: var(--outline-variant);
+
+  --color-error: var(--error);
+  --color-on-error: var(--on-error);
+  --color-error-container: var(--error-container);
+  --color-on-error-container: var(--on-error-container);
+}
+
+/* Base resets & typography */
+html, body {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-body);
+  background-color: var(--surface);
+  color: var(--on-surface);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-headline);
+}
+
+/* Material Symbols Styling */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Utility classes */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 16px);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}

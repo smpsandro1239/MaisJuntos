@@ -1,0 +1,6 @@
+{
+  "name": "+JUNTOS - Portugal em Família",
+  "description": "Guia e planeador inteligente de atividades culturais e lúdicas para famílias em Portugal com curadoria em tempo real.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

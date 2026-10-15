@@ -1,0 +1,25 @@
+{
+  "name": "juntos-backend",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "test": "vitest",
+    "cf-typegen": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.0.0",
+    "@types/node": "^26.6.5",
+    "typescript": "^5.5.2",
+    "vitest": "~4.1.0",
+    "wrangler": "^4.151.0"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.18.0",
+    "bcrypt-edge": "^0.1.1",
+    "hono": "^4.13.13",
+    "zod": "^4.6.7"
+  }
+}

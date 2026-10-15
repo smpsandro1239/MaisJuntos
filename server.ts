@@ -1,0 +1,762 @@
+import 'dotenv/config';
+import express from 'express';
+import { createServer } from 'http';
+import { WebSocketServer, WebSocket } from 'ws';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import helmet from 'helmet';
+import cors from 'cors';
+import cookieParser from 'cookie-parser';
+import rateLimit from 'express-rate-limit';
+import { z } from 'zod';
+
+import {
+  initDatabase,
+  getAllPoisFromDb,
+  insertOrUpdatePoiInDb,
+  deletePoiFromDb,
+  getAllReportsFromDb,
+  insertOrUpdateReportInDb,
+  getAppState,
+  setAppState,
+  getDatabaseStatus,
+  client,
+} from './src/db/turso';
+import {
+  findUserByEmail,
+  createUser,
+  createSession,
+  getSessionWithUser,
+  deleteSession,
+  comparePassword,
+} from './src/db/authDb';
+import { POI, CommunityReport, OperationalMetrics, FamilyPlan, User, UserRole } from './src/types';
+import { INITIAL_POIS, INITIAL_REPORTS, INITIAL_METRICS, INITIAL_FAMILY_PLAN } from './src/data/mockData';
+
+// Extensão de tipos do Express para utilizador e sessão autenticados
+declare global {
+  namespace Express {
+    interface Request {
+      user?: User;
+      sessionId?: string;
+    }
+  }
+}
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const isProd = process.env.NODE_ENV === 'production';
+const PORT = Number(process.env.PORT) || 3000;
+
+const COOKIE_NAME = 'juntos_session';
+const COOKIE_OPTIONS: express.CookieOptions = {
+  httpOnly: true,
+  secure: isProd,
+  sameSite: 'lax',
+  maxAge: 24 * 60 * 60 * 1000, // 24 horas
+  path: '/',
+};
+
+// Configuração de CORS com origens estritas
+const rawOrigins = process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000';
+const allowedOrigins = rawOrigins.split(',').map((o) => o.trim());
+
+function isAllowedOrigin(origin?: string): boolean {
+  if (!origin) return true;
+  if (allowedOrigins.includes(origin)) return true;
+  if (origin.endsWith('.run.app') || origin.startsWith('http://localhost:')) return true;
+  return false;
+}
+
+// Estado em memória sincronizado com Turso
+let pois: POI[] = [...INITIAL_POIS];
+let reports: CommunityReport[] = [...INITIAL_REPORTS];
+let metrics: OperationalMetrics = { ...INITIAL_METRICS };
+let familyPlan: FamilyPlan = { ...INITIAL_FAMILY_PLAN };
+
+const app = express();
+
+// 1. Camada de Cabeçalhos de Segurança (Helmet)
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
+// 2. Camada de Restrição de Origens (CORS)
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || isAllowedOrigin(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Origem não permitida pelas políticas de segurança.'));
+      }
+    },
+    credentials: true,
+  })
+);
+
+// 3. Parsers de Corpo e Cookies
+app.use(express.json({ limit: '1mb' }));
+app.use(cookieParser(process.env.SESSION_SECRET || 'chave-secreta-padrao-segura'));
+
+// 4. Rate Limiting por tipo de recurso
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 50,
+  message: { error: 'Demasiadas tentativas de autenticação. Por favor, tente novamente mais tarde.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const adminLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: { error: 'Limite de pedidos administrativos excedido.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1000,
+  message: { error: 'Limite global de pedidos excedido. Aguarde alguns instantes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use('/api', generalLimiter);
+
+// 5. Schemas de Validação com Zod
+const registerSchema = z.object({
+  email: z.string().email('Endereço de email inválido'),
+  password: z.string().min(8, 'A palavra-passe deve conter pelo menos 8 carateres'),
+  name: z.string().min(2, 'O nome deve conter pelo menos 2 carateres'),
+  role: z.enum(['parent', 'curator', 'admin']).optional(),
+});
+
+const loginSchema = z.object({
+  email: z.string().email('Endereço de email inválido'),
+  password: z.string().min(1, 'A palavra-passe é obrigatória'),
+});
+
+const poiCreateSchema = z.object({
+  name: z.string().min(2, 'O nome do ponto de interesse é obrigatório'),
+  category: z.string().optional(),
+  categoryLabel: z.string().optional(),
+  shortDescription: z.string().optional(),
+  fullDescription: z.string().optional(),
+  coverImage: z.string().optional(),
+  address: z.string().optional(),
+  latitude: z.number().optional(),
+  longitude: z.number().optional(),
+  priceChild: z.number().optional(),
+  priceAdult: z.number().optional(),
+  priceFamily: z.number().optional(),
+  isFree: z.boolean().optional(),
+  isOpenNow: z.boolean().optional(),
+  spaceType: z.enum(['interior', 'exterior', 'mixed']).optional(),
+}).passthrough();
+
+const reportCreateSchema = z.object({
+  poiId: z.string().min(1, 'O identificador do POI é obrigatório'),
+  poiName: z.string().min(1, 'O nome do POI é obrigatório'),
+  issueType: z.enum(['price_changed', 'nursery_closed', 'schedule_wrong', 'temporary_closure']),
+  issueLabel: z.string().min(1),
+  comment: z.string().min(1, 'O comentário do reporte é obrigatório'),
+}).passthrough();
+
+// 6. Middlewares de Autenticação e Autorização (RBAC)
+async function authenticateRequest(req: express.Request): Promise<User | null> {
+  const sessionId = req.cookies[COOKIE_NAME];
+  if (!sessionId) return null;
+  const sessionData = await getSessionWithUser(client, sessionId);
+  if (!sessionData) return null;
+  req.sessionId = sessionId;
+  req.user = sessionData.user;
+  return sessionData.user;
+}
+
+async function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  try {
+    const user = await authenticateRequest(req);
+    if (!user) {
+      return res.status(401).json({ error: 'Sessão não iniciada: autenticação obrigatória.' });
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+function requireRole(allowedRoles: UserRole[]) {
+  return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    try {
+      const user = await authenticateRequest(req);
+      if (!user) {
+        return res.status(401).json({ error: 'Sessão não iniciada: autenticação obrigatória.' });
+      }
+      if (!allowedRoles.includes(user.role)) {
+        return res.status(403).json({ error: 'Acesso negado: permissões insuficientes para esta operação.' });
+      }
+      next();
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+// 7. Servidor HTTP e WebSocket
+const httpServer = createServer(app);
+const wss = new WebSocketServer({
+  noServer: true,
+  maxPayload: 64 * 1024, // Limite de 64 KB por mensagem para proteção contra DoS
+});
+
+function parseCookiesHeader(header?: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!header) return result;
+  header.split(';').forEach((pair) => {
+    const parts = pair.split('=');
+    const key = parts[0]?.trim();
+    if (key) {
+      result[key] = decodeURIComponent(parts.slice(1).join('=').trim());
+    }
+  });
+  return result;
+}
+
+// Autenticação e validação estrita no Handshake do WebSocket
+httpServer.on('upgrade', async (request, socket, head) => {
+  try {
+    // A. Validação da origem
+    const origin = request.headers.origin;
+    if (origin && !isAllowedOrigin(origin)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    // B. Extração e validação da sessão por Cookie
+    const cookies = parseCookiesHeader(request.headers.cookie);
+    const sessionId = cookies[COOKIE_NAME];
+
+    if (!sessionId) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    const sessionData = await getSessionWithUser(client, sessionId);
+    if (!sessionData) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    // Handshake aprovado
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      (ws as any).user = sessionData.user;
+      wss.emit('connection', ws, request);
+    });
+  } catch {
+    socket.write('HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+  }
+});
+
+function broadcast(message: object, excludeWs?: WebSocket) {
+  const payload = JSON.stringify(message);
+  for (const clientWs of wss.clients) {
+    if (clientWs.readyState === WebSocket.OPEN && clientWs !== excludeWs) {
+      clientWs.send(payload);
+    }
+  }
+}
+
+wss.on('connection', (ws: WebSocket, req: any) => {
+  const wsUser: User = (ws as any).user;
+
+  ws.send(
+    JSON.stringify({
+      type: 'init',
+      data: {
+        pois,
+        reports,
+        metrics,
+        familyPlan,
+        connectedUsers: wss.clients.size,
+        authenticatedUser: wsUser ? { id: wsUser.id, role: wsUser.role } : null,
+      },
+    })
+  );
+
+  broadcast({
+    type: 'presence',
+    data: { connectedUsers: wss.clients.size },
+  });
+
+  ws.on('message', async (raw) => {
+    try {
+      const parsed = JSON.parse(raw.toString());
+      if (parsed.type === 'ping') {
+        ws.send(JSON.stringify({ type: 'pong' }));
+      } else if (parsed.type === 'poi:verify') {
+        // Apenas curadores ou administradores podem verificar POIs via WebSocket
+        if (wsUser && (wsUser.role === 'admin' || wsUser.role === 'curator')) {
+          const targetId = parsed.data?.id;
+          const index = pois.findIndex((p) => p.id === targetId);
+          if (index !== -1) {
+            pois[index] = {
+              ...pois[index],
+              status: 'verified',
+              verifiedAgoDays: 0,
+              verifiedSource: 'Verificação Oficial Presencial',
+              verifiedBy: wsUser.name,
+              dataQualityScore: Math.min(100, pois[index].dataQualityScore + 5),
+              updatedAt: new Date().toISOString(),
+            };
+            metrics.validatedThisWeek += 1;
+            metrics.pendingValidation = Math.max(0, metrics.pendingValidation - 1);
+            await insertOrUpdatePoiInDb(pois[index]);
+            broadcast({ type: 'poi:update', data: pois[index] });
+          }
+        }
+      }
+    } catch {
+      // Ignorar pacotes malformados
+    }
+  });
+
+  ws.on('close', () => {
+    broadcast({
+      type: 'presence',
+      data: { connectedUsers: wss.clients.size },
+    });
+  });
+});
+
+// 8. Endpoints de Autenticação Segura (Fase P0)
+
+// POST /api/auth/register
+app.post('/api/auth/register', authLimiter, async (req, res, next) => {
+  try {
+    const parseResult = registerSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: parseResult.error.issues[0]?.message || 'Dados inválidos' });
+    }
+
+    const { email, password, name, role } = parseResult.data;
+    const existing = await findUserByEmail(client, email);
+    if (existing) {
+      return res.status(409).json({ error: 'Já existe uma conta registada com este endereço de email.' });
+    }
+
+    const user = await createUser(client, {
+      email,
+      password,
+      name,
+      role: role || 'parent',
+    });
+
+    const userAgent = req.headers['user-agent'];
+    const ip = req.ip || req.socket.remoteAddress;
+    const sessionId = await createSession(client, user.id, userAgent, ip);
+
+    res.cookie(COOKIE_NAME, sessionId, COOKIE_OPTIONS);
+    return res.status(201).json({ success: true, user });
+  } catch (err: any) {
+    if (err.message?.includes('EMAIL_DUPLICADO')) {
+      return res.status(409).json({ error: 'Já existe uma conta registada com este endereço de email.' });
+    }
+    next(err);
+  }
+});
+
+// POST /api/auth/login
+app.post('/api/auth/login', authLimiter, async (req, res, next) => {
+  try {
+    const parseResult = loginSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: parseResult.error.issues[0]?.message || 'Credenciais inválidas' });
+    }
+
+    const { email, password } = parseResult.data;
+    const dbUser = await findUserByEmail(client, email);
+
+    if (!dbUser || !comparePassword(password, dbUser.password_hash)) {
+      return res.status(401).json({ error: 'Credenciais inválidas. Verifique o email e a palavra-passe.' });
+    }
+
+    const userAgent = req.headers['user-agent'];
+    const ip = req.ip || req.socket.remoteAddress;
+    const sessionId = await createSession(client, dbUser.id, userAgent, ip);
+
+    res.cookie(COOKIE_NAME, sessionId, COOKIE_OPTIONS);
+
+    const safeUser: User = {
+      id: dbUser.id,
+      email: dbUser.email,
+      name: dbUser.name,
+      role: dbUser.role,
+      avatar: dbUser.avatar,
+      provider: 'guest',
+      trustScore: dbUser.trust_score,
+    };
+
+    return res.json({ success: true, user: safeUser, token: sessionId });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/auth/logout
+app.post('/api/auth/logout', async (req, res, next) => {
+  try {
+    const sessionId = req.cookies[COOKIE_NAME];
+    if (sessionId) {
+      await deleteSession(client, sessionId);
+    }
+    res.clearCookie(COOKIE_NAME, COOKIE_OPTIONS);
+    return res.json({ success: true, message: 'Sessão terminada com sucesso.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/auth/me
+app.get('/api/auth/me', async (req, res, next) => {
+  try {
+    const user = await authenticateRequest(req);
+    if (!user) {
+      return res.json({ user: null });
+    }
+    return res.json({ user });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 9. Endpoints de POI (Com Proteção RBAC Estrita)
+
+// GET /api/pois (Público)
+app.get('/api/pois', (_req, res) => {
+  res.json(pois);
+});
+
+// GET /api/pois/:id (Público)
+app.get('/api/pois/:id', (req, res) => {
+  const item = pois.find((p) => p.id === req.params.id);
+  if (!item) return res.status(404).json({ error: 'Ponto de interesse não encontrado' });
+  res.json(item);
+});
+
+// POST /api/pois (Restrito a 'admin' e 'curator')
+app.post('/api/pois', adminLimiter, requireRole(['admin', 'curator']), async (req, res, next) => {
+  try {
+    const parseResult = poiCreateSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: parseResult.error.issues[0]?.message || 'Dados do POI inválidos' });
+    }
+
+    const payload = parseResult.data;
+    const newPoi: POI = {
+      ...payload,
+      id: req.body.id || `poi-${Date.now()}`,
+      code: req.body.code || `#POI-${Date.now().toString().slice(-4)}`,
+      name: payload.name,
+      slug: payload.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      category: payload.category || 'parque',
+      categoryLabel: payload.categoryLabel || 'Parque & Lazer',
+      categoryIcon: 'place',
+      shortDescription: payload.shortDescription || '',
+      fullDescription: payload.fullDescription || payload.shortDescription || '',
+      rating: 5.0,
+      reviewCount: 1,
+      images: [],
+      coverImage: payload.coverImage || 'https://images.unsplash.com/photo-1519331379826-f10be5486c6f?w=600&auto=format&fit=crop&q=80',
+      distanceMinutes: 10,
+      distanceKm: 2.0,
+      city: 'Braga',
+      address: payload.address || 'Braga, Portugal',
+      postalCode: '4700-000 Braga',
+      latitude: payload.latitude || 41.55,
+      longitude: payload.longitude || -8.42,
+      minAge: 0,
+      maxAge: 12,
+      ageRecommendation: 'Todas as idades',
+      isFree: Boolean(payload.isFree),
+      priceChild: payload.priceChild || 0,
+      priceAdult: payload.priceAdult || 0,
+      priceFamily: payload.priceFamily || 0,
+      priceNotes: payload.isFree ? 'Entrada gratuita' : 'Preçário municipal',
+      spaceType: payload.spaceType || 'mixed',
+      isOpenNow: Boolean(payload.isOpenNow),
+      openingHoursToday: '09:00 - 18:00',
+      schedule: [],
+      amenities: [],
+      experienceHighlights: [],
+      verifiedAgoDays: 0,
+      verifiedSource: `Adicionado por ${req.user?.name}`,
+      verifiedBy: req.user?.name || 'Administração',
+      dataQualityScore: 90,
+      status: 'verified',
+      bookingPolicy: 'none',
+      phone: '+351 253 000 000',
+      phoneTested: true,
+      lastPhysicalAudit: new Date().toISOString().split('T')[0],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    pois.unshift(newPoi);
+    metrics.totalPois += 1;
+    await insertOrUpdatePoiInDb(newPoi);
+
+    broadcast({ type: 'poi:create', data: newPoi });
+    return res.status(201).json(newPoi);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/pois/:id (Restrito a 'admin' e 'curator')
+app.put('/api/pois/:id', adminLimiter, requireRole(['admin', 'curator']), async (req, res, next) => {
+  try {
+    const index = pois.findIndex((p) => p.id === req.params.id);
+    if (index === -1) return res.status(404).json({ error: 'Ponto de interesse não encontrado' });
+
+    pois[index] = {
+      ...pois[index],
+      ...req.body,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await insertOrUpdatePoiInDb(pois[index]);
+    broadcast({ type: 'poi:update', data: pois[index] });
+    return res.json(pois[index]);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/pois/:id (Restrito exclusivamente a 'admin')
+app.delete('/api/pois/:id', adminLimiter, requireRole(['admin']), async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const exists = pois.some((p) => p.id === id);
+    if (!exists) {
+      return res.status(404).json({ error: 'Ponto de interesse não encontrado' });
+    }
+
+    pois = pois.filter((p) => p.id !== id);
+    metrics.totalPois = Math.max(0, metrics.totalPois - 1);
+    await deletePoiFromDb(id);
+
+    broadcast({ type: 'poi:delete', data: { id } });
+    return res.json({ success: true, id });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/pois/import-batch (Restrito exclusivamente a 'admin')
+app.post('/api/pois/import-batch', adminLimiter, requireRole(['admin']), async (req, res, next) => {
+  try {
+    const { newPois } = req.body;
+    if (!Array.isArray(newPois) || newPois.length === 0) {
+      return res.status(400).json({ error: 'Nenhum POI válido para importar.' });
+    }
+
+    const addedList: POI[] = [];
+    for (const item of newPois) {
+      const formatted: POI = {
+        ...item,
+        id: `poi-imported-${Date.now()}-${item.name?.slice(0, 3)}`,
+        code: `#POI-${Date.now().toString().slice(-4)}`,
+        name: item.name || 'Parque Familiar',
+        slug: (item.name || 'parque').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        category: item.category || 'parque',
+        categoryLabel: item.categoryLabel || 'Parque',
+        categoryIcon: 'park',
+        shortDescription: item.shortDescription || '',
+        fullDescription: item.fullDescription || item.shortDescription || '',
+        rating: 4.8,
+        reviewCount: 10,
+        images: [],
+        coverImage: 'https://images.unsplash.com/photo-1519331379826-f10be5486c6f?w=600&auto=format&fit=crop&q=80',
+        distanceMinutes: 10,
+        distanceKm: 2.0,
+        city: 'Braga',
+        address: item.address || 'Braga, Portugal',
+        postalCode: '4700-000 Braga',
+        latitude: item.latitude || 41.55,
+        longitude: item.longitude || -8.42,
+        minAge: 0,
+        maxAge: 12,
+        ageRecommendation: 'Todas as idades',
+        isFree: true,
+        priceChild: 0,
+        priceAdult: 0,
+        priceFamily: 0,
+        priceNotes: 'Entrada livre',
+        spaceType: 'exterior',
+        isOpenNow: true,
+        openingHoursToday: 'Aberto',
+        schedule: [],
+        amenities: [],
+        experienceHighlights: [],
+        verifiedAgoDays: 0,
+        verifiedSource: 'Importação em Lote Autorizada',
+        verifiedBy: req.user?.name || 'Administrador',
+        dataQualityScore: 90,
+        status: 'verified',
+        bookingPolicy: 'none',
+        phone: '+351 253 000 000',
+        phoneTested: true,
+        lastPhysicalAudit: new Date().toISOString().split('T')[0],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await insertOrUpdatePoiInDb(formatted);
+      addedList.push(formatted);
+      pois.unshift(formatted);
+    }
+
+    metrics.totalPois += addedList.length;
+    broadcast({ type: 'poi:batch', data: addedList });
+    return res.json({ success: true, count: addedList.length, pois: addedList });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 10. Endpoints de Reportes da Comunidade
+
+// GET /api/reports (Público)
+app.get('/api/reports', (_req, res) => {
+  res.json(reports);
+});
+
+// POST /api/reports (Público: qualquer utilizador pode submeter alerta)
+app.post('/api/reports', async (req, res, next) => {
+  try {
+    const parseResult = reportCreateSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: parseResult.error.issues[0]?.message || 'Dados inválidos' });
+    }
+
+    const data = parseResult.data;
+    const newReport: CommunityReport = {
+      ...req.body,
+      id: `rep-${Date.now()}`,
+      code: `#REP-${Date.now().toString().slice(-4)}`,
+      status: 'open',
+      reportedAgo: 'Agora mesmo',
+      createdAt: new Date().toISOString(),
+    };
+
+    reports.unshift(newReport);
+    metrics.criticalReportsCount += 1;
+    await insertOrUpdateReportInDb(newReport);
+
+    broadcast({ type: 'report:create', data: newReport });
+    return res.status(201).json(newReport);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/reports/:id (Restrito a 'admin' e 'curator')
+app.put('/api/reports/:id', adminLimiter, requireRole(['admin', 'curator']), async (req, res, next) => {
+  try {
+    const index = reports.findIndex((r) => r.id === req.params.id);
+    if (index === -1) return res.status(404).json({ error: 'Reporte não encontrado' });
+
+    reports[index] = {
+      ...reports[index],
+      ...req.body,
+    };
+
+    if (req.body.status === 'resolved' && req.body.applyToPoi) {
+      const targetPoiIndex = pois.findIndex((p) => p.id === reports[index].poiId);
+      if (targetPoiIndex !== -1) {
+        if (reports[index].issueType === 'price_changed') {
+          pois[targetPoiIndex].priceFamily = parseFloat(reports[index].newValue.replace('€', '').trim()) || 7.5;
+        }
+        pois[targetPoiIndex].updatedAt = new Date().toISOString();
+        await insertOrUpdatePoiInDb(pois[targetPoiIndex]);
+        broadcast({ type: 'poi:update', data: pois[targetPoiIndex] });
+      }
+    }
+
+    await insertOrUpdateReportInDb(reports[index]);
+    broadcast({ type: 'report:update', data: reports[index] });
+    return res.json(reports[index]);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 11. Métricas e Estado da Base de Dados
+app.get('/api/metrics', (_req, res) => {
+  res.json(metrics);
+});
+
+app.get('/api/db/status', (_req, res) => {
+  res.json(getDatabaseStatus());
+});
+
+// 12. Tratamento Global de Erros Sem Revelação de Stack Traces
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const status = err.status || err.statusCode || 500;
+  const clientMessage = status === 500 ? 'Ocorreu um erro interno no servidor.' : err.message || 'Pedido inválido.';
+  // Mensagem segura sem stack traces
+  res.status(status).json({ error: clientMessage });
+});
+
+// 13. Arranque e Inicialização Segura
+async function start() {
+  console.log('[Security] A verificar ambiente e a iniciar base de dados Turso...');
+  await initDatabase();
+
+  pois = await getAllPoisFromDb();
+  reports = await getAllReportsFromDb();
+  metrics = await getAppState('metrics', metrics);
+  familyPlan = await getAppState('family_plan', familyPlan);
+
+  // Limpeza de registos de teste efémeros que possam ter permanecido na Turso
+  const testIds = pois.filter((p) => p.id.startsWith('poi-test-') || p.id.startsWith('poi-persist-test-'));
+  for (const t of testIds) {
+    await deletePoiFromDb(t.id);
+  }
+  if (testIds.length > 0) {
+    pois = pois.filter((p) => !p.id.startsWith('poi-test-') && !p.id.startsWith('poi-persist-test-'));
+    console.log(`[Security] Removidos ${testIds.length} registos de teste da base de dados.`);
+  }
+
+  if (!isProd) {
+    const { createServer: createViteServer } = await import('vite');
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    app.use(express.static(path.resolve(__dirname, 'dist')));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+    });
+  }
+
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`[Server] Servidor +JUNTOS ativo e protegido em http://0.0.0.0:${PORT}`);
+  });
+}
+
+start().catch((err) => {
+  console.error('[Fatal] Falha no arranque do servidor:', err.message);
+  process.exit(1);
+});

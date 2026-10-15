@@ -1,0 +1,41 @@
+/**
+ * Configuração do Worker +JUNTOS (migração de Express → Cloudflare Workers).
+ * Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+ * Segredos NUNCA aqui — usar `wrangler secret put` (ver SECRETS.md).
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "juntos-backend",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-06",
+  "compatibility_flags": ["nodejs_compat", "nodejs_compat_populate_process_env"],
+  "observability": {
+    "enabled": true
+  },
+  "upload_source_maps": true,
+  "vars": {
+    "NODE_ENV": "production"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "REALTIME",
+        "class_name": "RealtimeDO"
+      },
+      {
+        "name": "RATE_LIMITER",
+        "class_name": "RateLimitDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["RealtimeDO"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["RateLimitDO"]
+    }
+  ]
+}

@@ -85,14 +85,19 @@ app.use(
 );
 
 // 2. Camada de Restrição de Origens (CORS)
+// Guarda explícito: origem não permitida responde 403 (em vez de erro interno 500)
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && !isAllowedOrigin(origin)) {
+    return res.status(403).json({ error: 'Origem não permitida pelas políticas de segurança.' });
+  }
+  next();
+});
+
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || isAllowedOrigin(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error('Origem não permitida pelas políticas de segurança.'));
-      }
+      callback(null, !origin || isAllowedOrigin(origin));
     },
     credentials: true,
   })
@@ -914,8 +919,16 @@ app.delete('/api/plans/:id', requireAuth, async (req, res, next) => {
 });
 
 // 12. Tratamento Global de Erros Sem Revelação de Stack Traces
-app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  // Se a resposta já foi iniciada, não tentar reescrever o estado — delegar
+  if (res.headersSent) {
+    return next(err);
+  }
   const status = err.status || err.statusCode || 500;
+  // Registo seguro: nunca o texto da mensagem (pode conter o URL da base de dados)
+  console.error(
+    `[Error] status=${status} nome=${err?.name || 'Error'} codigo=${err?.code || err?.cause?.code || 'n/d'}`
+  );
   const clientMessage = status === 500 ? 'Ocorreu um erro interno no servidor.' : err.message || 'Pedido inválido.';
   // Mensagem segura sem stack traces
   res.status(status).json({ error: clientMessage });
@@ -924,7 +937,20 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 // 13. Arranque e Inicialização Segura
 async function start() {
   console.log('[Security] A verificar ambiente e a iniciar base de dados Turso...');
-  await initDatabase();
+  // Retentativas de arranque: falhas transitórias de DNS/rede (comum em contentores)
+  // não podem matar o processo logo à primeira
+  const MAX_TENTATIVAS = 5;
+  for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+    try {
+      await initDatabase();
+      break;
+    } catch (err) {
+      if (tentativa === MAX_TENTATIVAS) throw err;
+      const codigo = (err as any)?.cause?.code || 'erro_de_rede';
+      console.warn(`[Database] Tentativa ${tentativa}/${MAX_TENTATIVAS} falhou (${codigo}). Nova tentativa em 3s...`);
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+  }
 
   pois = await getAllPoisFromDb();
   reports = await getAllReportsFromDb();
@@ -961,6 +987,8 @@ async function start() {
 }
 
 start().catch((err) => {
-  console.error('[Fatal] Falha no arranque do servidor:', err.message);
+  console.error(
+    `[Fatal] Falha no arranque do servidor (codigo=${err?.cause?.code || err?.code || 'n/d'}).`
+  );
   process.exit(1);
 });

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { RealtimeProvider, useRealtime } from './context/RealtimeContext';
 import { Header } from './components/common/Header';
@@ -18,19 +18,41 @@ import { PoiDetailScreen } from './components/parent/PoiDetailScreen';
 import { MapScreen } from './components/parent/MapScreen';
 import { PlanScreen } from './components/parent/PlanScreen';
 import { FavoritesScreen } from './components/parent/FavoritesScreen';
-import { AdminSidebar, AdminTab } from './components/admin/AdminSidebar';
-import { AdminHeader } from './components/admin/AdminHeader';
-import { DashboardScreen } from './components/admin/DashboardScreen';
-import { CuratorshipScreen } from './components/admin/CuratorshipScreen';
-import { ReportsScreen } from './components/admin/ReportsScreen';
-import { PoiEditorScreen } from './components/admin/PoiEditorScreen';
-import {
-  CategoriesScreen,
-  CsvImportScreen,
-  AuditLogsScreen,
-  SettingsScreen,
-} from './components/admin/AdminSecondaryScreens';
-import { NewPoiModal } from './components/admin/NewPoiModal';
+import type { AdminTab } from './components/admin/AdminSidebar';
+
+const AdminSidebar = lazy(() =>
+  import('./components/admin/AdminSidebar').then((m) => ({ default: m.AdminSidebar }))
+);
+const AdminHeader = lazy(() =>
+  import('./components/admin/AdminHeader').then((m) => ({ default: m.AdminHeader }))
+);
+const DashboardScreen = lazy(() =>
+  import('./components/admin/DashboardScreen').then((m) => ({ default: m.DashboardScreen }))
+);
+const CuratorshipScreen = lazy(() =>
+  import('./components/admin/CuratorshipScreen').then((m) => ({ default: m.CuratorshipScreen }))
+);
+const ReportsScreen = lazy(() =>
+  import('./components/admin/ReportsScreen').then((m) => ({ default: m.ReportsScreen }))
+);
+const PoiEditorScreen = lazy(() =>
+  import('./components/admin/PoiEditorScreen').then((m) => ({ default: m.PoiEditorScreen }))
+);
+const CategoriesScreen = lazy(() =>
+  import('./components/admin/AdminSecondaryScreens').then((m) => ({ default: m.CategoriesScreen }))
+);
+const CsvImportScreen = lazy(() =>
+  import('./components/admin/AdminSecondaryScreens').then((m) => ({ default: m.CsvImportScreen }))
+);
+const AuditLogsScreen = lazy(() =>
+  import('./components/admin/AdminSecondaryScreens').then((m) => ({ default: m.AuditLogsScreen }))
+);
+const SettingsScreen = lazy(() =>
+  import('./components/admin/AdminSecondaryScreens').then((m) => ({ default: m.SettingsScreen }))
+);
+const NewPoiModal = lazy(() =>
+  import('./components/admin/NewPoiModal').then((m) => ({ default: m.NewPoiModal }))
+);
 import { DeviceSimulatorModal } from './components/common/DeviceSimulatorModal';
 import { POI } from './types';
 
@@ -223,6 +245,7 @@ const AppContent: React.FC = () => {
         </div>
       ) : (
         /* CURATORIAL BACKOFFICE EXPERIENCE */
+        <Suspense fallback={<div className="w-full min-h-screen bg-background" />}>
         <div className="w-full min-h-screen bg-background flex flex-col">
           {/* Admin Sidebar Navigation */}
           <AdminSidebar
@@ -277,6 +300,7 @@ const AppContent: React.FC = () => {
             </main>
           </div>
         </div>
+        </Suspense>
       )}
 
       {/* Global Modals & Toasts */}
@@ -289,10 +313,12 @@ const AppContent: React.FC = () => {
         onClose={() => setReportModalOpen(false)}
         targetPoi={selectedPoiForDetail}
       />
-      <NewPoiModal
-        isOpen={newPoiModalOpen}
-        onClose={() => setNewPoiModalOpen(false)}
-      />
+      <Suspense fallback={null}>
+        <NewPoiModal
+          isOpen={newPoiModalOpen}
+          onClose={() => setNewPoiModalOpen(false)}
+        />
+      </Suspense>
       <DeviceSimulatorModal
         isOpen={deviceSimulatorOpen}
         onClose={() => setDeviceSimulatorOpen(false)}

@@ -1,0 +1,17 @@
+node_modules
+dist
+.git
+.vercel
+.wrangler
+.dry-run
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+
+# Backends e artefactos que não pertencem à imagem
+juntos-backend
+tests
+docs
+NEXT-ITERATION.md

@@ -52,7 +52,10 @@ export async function initDatabase(): Promise<boolean> {
 
     return true;
   } catch (err) {
-    console.error('[Database] Erro crítico ao inicializar a base de dados:', err);
+    // Registo seguro: apenas o código do erro (nunca o objeto completo, que expõe o URL da base de dados)
+    console.error(
+      `[Database] Erro crítico ao inicializar a base de dados (codigo=${(err as any)?.cause?.code || (err as any)?.code || 'n/d'}).`
+    );
     throw err;
   }
 }

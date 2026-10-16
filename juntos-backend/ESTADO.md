@@ -1,6 +1,6 @@
 # ESTADO DA MIGRAÇÃO
 
-Atualizado: 2026-10-15 (sessão atual)
+Atualizado: 2026-10-16 (sessão atual)
 
 ## MODO EXECUÇÃO DENSA
 Por resposta, executa o MÁXIMO de ações possível antes de o contexto acabar.
@@ -91,12 +91,74 @@ confirmado). Push autenticado por Git Credential Manager.
 - Vercel: definir `VITE_API_URL` / `VITE_WS_URL` + `vercel --prod`.
 - Recomendado (não obrigatório): rodar as passwords de `admin@maisjuntos.pt`,
   `curator@maisjuntos.pt` e `parent@maisjuntos.pt` — estiveram em texto simples
-  no código local (nunca publicadas) e continuam válidas na Turso.
+  no código local (nunca publicadas) e continuam válidas na Turso. Já não há
+  literais no repositório.
 - Apagar as 9 contas `teste.seguranca.*@maisjuntos.pt` da Turso.
+- F5.5: fornecer credenciais OAuth (Google/GitHub) para concluir o login social.
+- Nota (Worker): os secrets `ADMIN_PASSWORD`/`CURATOR_PASSWORD`/`PARENT_PASSWORD`
+  não estão definidos no Worker — o seed só corre com a tabela `users` vazia
+  (a BD está preenchida → no-op). Definir apenas se for necessário
+  reprovisionar utilizadores.
 
 ## Próximos passos sugeridos (loop +JUNTOS)
-Ciclo 5 do plano original (`docs/NEXT-ITERATION-2026-10-15*.md`) por executar:
-output pendente do loop; sem impedimentos técnicos do lado da migração.
+Ciclo 5 está em execução (F5.1–F5.4 e F5.6 feitos). Falta F5.5 (OAuth real),
+bloqueado por credenciais Google/GitHub do utilizador.
+
+## CICLO 5 — NOVAS FUNCIONALIDADES (2026-10-16)
+Backend em paridade obrigatória: Worker **e** Express.
+- **F5.1 — OK.** Cache de meteorologia. `juntos-backend/src/routes/weather.ts`
+  (whitelist de 6 cidades, cache em `app_state` TTL 15 min, `waitUntil`,
+  fallback Open-Meteo); rota `/api/weather` no Express; o frontend
+  (`src/services/weatherGeoService.ts`) consulta o backend primeiro. Deploy
+  `d3a4c744-…`. Verificado: MISS→HIT→HIT e 400 para cidade inválida.
+- **F5.2 — OK.** Persistência de favoritos e roteiros familiares. Migração
+  `003 create_family_plans_table`; `juntos-backend/src/routes/favorites.ts`
+  (`GET/POST/DELETE /api/favorites`, `GET/POST/DELETE /api/plans` com
+  `requireAuth`); rotas equivalentes no Express; `AuthContext.tsx` hidrata a
+  sessão via `/api/auth/me` e sincroniza os favoritos com a BD. Deploy
+  `84d97b93-…`. Verificado em Express e produção (401/200/201/400/404 +
+  idempotência).
+- **F5.3 — OK (RGPD).** `CookieBanner.tsx` (consentimento essencial/total),
+  `PrivacyModal.tsx` (política + termos), `DELETE /api/auth/account` no Worker
+  e no Express (elimina conta, sessões, favoritos, roteiros e contas OAuth;
+  anonimiza reportes da comunidade), `deleteAccount()` no `AuthContext`, link
+  de privacidade + confirmação de eliminação no `AuthModal`. Verificado em
+  Express e produção com conta descartável (registar → favorito → roteiro →
+  eliminar → `me` null, login 401, DELETE sem sessão 401).
+- **F5.4 — OK.** Mapa Leaflet validado: já implementado com tiles OSM reais,
+  marcadores `divIcon`, GPS do utilizador, recentrar, filtros e ligação
+  «Como Chegar». 9 POIs, todos com coordenadas válidas; sem imagem estática
+  residual; `leaflet/dist/leaflet.css` importado.
+- **F5.6 — OK.** Produção/empacotamento: `Dockerfile` multi-stage
+  (`node:22-slim`, build Vite + runtime só com deps de produção); `.dockerignore`;
+  `tsx` movido para `dependencies` (o `npm start` já não quebra com
+  `--omit=dev`); code-splitting com `React.lazy`/`Suspense` no `App.tsx`
+  (bundle principal **631→515 kB**, gzip 164→147 kB; ecrãs de admin em 9
+  chunks). Validação real: `docker build` OK; contentor serve estático 200,
+  `/api/pois` 200, `login` 401, origem hostil 403.
+- **F5.5 — PENDENTE.** OAuth real Google/GitHub (bloqueado: precisa de
+  client id/secret do utilizador). Implementar código + placeholders e
+  documentar.
+
+### Correções de paridade do Express (2026-10-16)
+- CORS: origem não permitida respondia **500** (callback com `new Error`);
+  agora existe guarda explícita que responde **403** (preflight e pedidos
+  normais), alinhada com o Worker. CORS callback passou a `callback(null,false)`.
+- Handler de erros global não tinha guarda `res.headersSent` (podia reescrever
+  o estado de uma resposta já iniciada). Corrigido.
+- Arranque resiliente: `start()` reentrega `initDatabase()` até 5 vezes com
+  espera de 3 s — uma falha transitória de DNS/rede (`EAI_AGAIN`, comum em
+  contentores) já não mata o processo. Confirmado no contentor: tentativa 1/5
+  falhou e o servidor arrancou na tentativa seguinte.
+- Higiene de logs: `[Database]`, `[Error]` e `[Fatal]` deixaram de imprimir o
+  objeto de erro completo (que expunha o hostname/URL da base de dados) —
+  apenas o código do erro.
+- Re-verificado: lint 0, `npm test` 16/16, matriz completa (pois 200; OPTIONS
+  boa 204 / hostil 403; POST hostil 403; login errado 401; login admin 200).
+
+### Commits do repositório público
+`cc4fcb6` (92 ficheiros) → `0b20347` (ESTADO.md) → `e83efd6` (Ciclo 5 F5.1+F5.2)
+→ `dabc795` (RGPD/F5.3). Todos em `origin/main`.
 ## Pré-deploy (2026-10-15, sessão de auditoria)
 - `wrangler dev --remote` (edge real): login bcrypt curator/parent → 200, sem
   erro 1102; auditoria Turso passou de bcrypt 10/pbkdf2 1 para bcrypt 8/pbkdf2 3

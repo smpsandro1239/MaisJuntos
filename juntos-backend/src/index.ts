@@ -6,6 +6,8 @@ import authRoutes from './routes/auth';
 import poiRoutes from './routes/pois';
 import reportRoutes from './routes/reports';
 import miscRoutes from './routes/misc';
+import weatherRoutes from './routes/weather';
+import favoriteRoutes from './routes/favorites';
 import type { Env } from './env';
 
 export { RealtimeDO } from './realtime-do';
@@ -29,6 +31,8 @@ app.route('/api/auth', authRoutes);
 app.route('/api/pois', poiRoutes);
 app.route('/api/reports', reportRoutes);
 app.route('/api', miscRoutes);
+app.route('/api', weatherRoutes);
+app.route('/api', favoriteRoutes);
 
 // Upgrade WebSocket → encaminhado para o Durable Object (auth + Origin no DO)
 app.get('/ws', async (c) => {

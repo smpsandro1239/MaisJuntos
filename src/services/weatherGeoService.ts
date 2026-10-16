@@ -1,3 +1,5 @@
+import { API_BASE } from '../config';
+
 export interface WeatherData {
   temperature: number;
   weatherCode: number;
@@ -7,7 +9,6 @@ export interface WeatherData {
   city: string;
 }
 
-// Coordinates for Portuguese cities
 export const PORTUGAL_CITIES_COORDS: Record<string, { lat: number; lng: number; name: string }> = {
   'Braga, Centro': { lat: 41.5518, lng: -8.4229, name: 'Braga' },
   'Porto, Baixa': { lat: 41.1496, lng: -8.6109, name: 'Porto' },
@@ -20,6 +21,19 @@ export const PORTUGAL_CITIES_COORDS: Record<string, { lat: number; lng: number; 
 export async function fetchLiveWeather(cityKey: string): Promise<WeatherData> {
   const coords = PORTUGAL_CITIES_COORDS[cityKey] || PORTUGAL_CITIES_COORDS['Braga, Centro'];
 
+  // 1.º: backend próprio (cache de 15 min partilhada entre todos os clientes).
+  try {
+    const res = await fetch(`${API_BASE}/api/weather?city=${encodeURIComponent(cityKey)}`, {
+      credentials: 'include',
+    });
+    if (res.ok) {
+      return (await res.json()) as WeatherData;
+    }
+  } catch {
+    // backend indisponível — tenta a Open-Meteo diretamente
+  }
+
+  // 2.º: chamada direta à Open-Meteo (fallback).
   try {
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lng}&current=temperature_2m,weather_code,precipitation&timezone=Europe%2FLisbon`;
     const res = await fetch(url);

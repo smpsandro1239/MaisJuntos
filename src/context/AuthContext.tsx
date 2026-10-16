@@ -57,22 +57,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('juntos_user', JSON.stringify(user));
   }, [user]);
 
-  // Sync favorites
+  // Hidratar a sessão a partir do cookie (se existir) e carregar favoritos.
   useEffect(() => {
-    localStorage.setItem('juntos_favs', JSON.stringify(favorites));
-  }, [favorites]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
+        if (!res.ok) return;
+        const data = (await res.json()) as { user: User | null };
+        if (cancelled || !data?.user) return;
+        setUser(data.user);
+
+        const favRes = await fetch(`${API_BASE}/api/favorites`, { credentials: 'include' });
+        if (!favRes.ok) return;
+        const favs = (await favRes.json()) as { poiId: string }[];
+        if (!cancelled && Array.isArray(favs)) {
+          setFavorites(favs.map((f) => f.poiId));
+        }
+      } catch {
+        // sem sessão — mantém favoritos locais
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Sync favorites (apenas para visitantes; utilizadores com sessão vivem na BD).
+  useEffect(() => {
+    if (user.provider === 'guest') {
+      localStorage.setItem('juntos_favs', JSON.stringify(favorites));
+    }
+  }, [favorites, user.provider]);
 
   const toggleDarkMode = () => setIsDarkMode((prev) => !prev);
   const togglePhoneFrameMode = () => setPhoneFrameMode((prev) => !prev);
 
   const toggleFavorite = (poiId: string) => {
-    setFavorites((prev) => {
-      if (prev.includes(poiId)) {
-        return prev.filter((id) => id !== poiId);
-      } else {
-        return [...prev, poiId];
-      }
-    });
+    const willAdd = !favorites.includes(poiId);
+    setFavorites((prev) => (prev.includes(poiId) ? prev.filter((id) => id !== poiId) : [...prev, poiId]));
+
+    // Persistência por utilizador autenticado (falha silenciosa → mantém local).
+    if (user.provider !== 'guest') {
+      const path = `${API_BASE}/api/favorites/${encodeURIComponent(poiId)}`;
+      fetch(path, { method: willAdd ? 'POST' : 'DELETE', credentials: 'include' }).catch(() => {
+        // Reverter em caso de erro de rede
+        setFavorites((prev) => (willAdd ? prev.filter((id) => id !== poiId) : [...prev, poiId]));
+      });
+    }
   };
 
   const login = async (provider: 'google' | 'github', customName?: string, customEmail?: string) => {

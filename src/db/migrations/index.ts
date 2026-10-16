@@ -159,6 +159,24 @@ export const migrations: Migration[] = [
       }
     },
   },
+  {
+    version: '003',
+    name: 'create_family_plans_table',
+    up: async (client: Client) => {
+      await client.execute(`
+        CREATE TABLE IF NOT EXISTS family_plans (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          plan_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+      `);
+      await client.execute('CREATE INDEX IF NOT EXISTS idx_family_plans_user ON family_plans(user_id)');
+    },
+  },
 ];
 
 export async function runMigrations(client: Client): Promise<void> {

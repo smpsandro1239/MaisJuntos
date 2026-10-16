@@ -709,6 +709,190 @@ app.get('/api/db/status', (_req, res) => {
   res.json(getDatabaseStatus());
 });
 
+// 11b. Meteorologia com cache no backend (TTL 15 min) — paridade com o Worker
+const WEATHER_CITY_COORDS: Record<string, { lat: number; lng: number; name: string }> = {
+  'Braga, Centro': { lat: 41.5518, lng: -8.4229, name: 'Braga' },
+  'Porto, Baixa': { lat: 41.1496, lng: -8.6109, name: 'Porto' },
+  'Guimarães, Histórico': { lat: 41.4425, lng: -8.2918, name: 'Guimarães' },
+  'Famalicão, Centro': { lat: 41.4079, lng: -8.5197, name: 'Vila Nova de Famalicão' },
+  'Lisboa, Centro': { lat: 38.7223, lng: -9.1393, name: 'Lisboa' },
+  'Coimbra, Baixa': { lat: 40.2056, lng: -8.4196, name: 'Coimbra' },
+};
+const WEATHER_CACHE_TTL_MS = 15 * 60 * 1000;
+
+interface WeatherPayload {
+  temperature: number;
+  weatherCode: number;
+  conditionLabel: string;
+  isRain: boolean;
+  description: string;
+  city: string;
+}
+
+app.get('/api/weather', async (req, res) => {
+  const cityKey = String(req.query.city || 'Braga, Centro');
+  const coords = WEATHER_CITY_COORDS[cityKey];
+  if (!coords) {
+    res.status(400).json({ error: 'Cidade não suportada.' });
+    return;
+  }
+
+  const cacheKey = `weather:${cityKey}`;
+  try {
+    const cached = await getAppState<{ data: WeatherPayload; ts: number } | null>(cacheKey, null);
+    if (cached && cached.ts && Date.now() - cached.ts < WEATHER_CACHE_TTL_MS && cached.data) {
+      res.set('X-Weather-Cache', 'HIT').json(cached.data);
+      return;
+    }
+  } catch {
+    // cache indisponível — segue para a chamada externa
+  }
+
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lng}&current=temperature_2m,weather_code,precipitation&timezone=Europe%2FLisbon`;
+    const upstream = await fetch(url);
+    if (!upstream.ok) throw new Error(`Open-Meteo ${upstream.status}`);
+    const data = (await upstream.json()) as {
+      current: { temperature_2m?: number; weather_code?: number; precipitation?: number };
+    };
+    const code = data.current.weather_code ?? 0;
+    const precip = data.current.precipitation ?? 0;
+    const isRain = [51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99].includes(code) || precip > 0.1;
+    let conditionLabel = 'Céu Limpo';
+    let description = 'Excelente para atividades ao ar livre e parques';
+    if (code === 1 || code === 2 || code === 3) {
+      conditionLabel = 'Parcialmente Nublado';
+      description = 'Bom tempo para ar livre com casaco leve';
+    } else if (isRain) {
+      conditionLabel = 'Chuva / Aguaceiros';
+      description = 'Recomendado espaços interiores ou planos cobertos ☔';
+    }
+
+    const payload: WeatherPayload = {
+      temperature: Math.round(data.current.temperature_2m ?? 19),
+      weatherCode: code,
+      conditionLabel,
+      isRain,
+      description,
+      city: coords.name,
+    };
+    await setAppState(cacheKey, { data: payload, ts: Date.now() });
+    res.set('X-Weather-Cache', 'MISS').json(payload);
+  } catch {
+    res.set('X-Weather-Cache', 'FALLBACK').json({
+      temperature: 19,
+      weatherCode: 61,
+      conditionLabel: 'Chuva leve',
+      isRain: true,
+      description: 'Aguaceiros fracos a partir da tarde • Ideal para espaços interiores',
+      city: coords.name,
+    } satisfies WeatherPayload);
+  }
+});
+
+// 11c. Favoritos e Roteiros persistidos por utilizador (paridade com o Worker)
+app.get('/api/favorites', requireAuth, async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const rs = await client.execute({
+      sql: 'SELECT poiId, createdAt FROM user_favorites WHERE userId = ? ORDER BY createdAt DESC',
+      args: [user.id],
+    });
+    res.json(rs.rows.map((r) => ({ poiId: String(r.poiId), createdAt: String(r.createdAt) })));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/favorites/:poiId', requireAuth, async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const poiId = req.params.poiId;
+    const poi = await client.execute({ sql: 'SELECT id FROM pois WHERE id = ?', args: [poiId] });
+    if (!poi.rows.length) {
+      res.status(404).json({ error: 'POI inexistente.' });
+      return;
+    }
+    await client.execute({
+      sql: 'INSERT OR IGNORE INTO user_favorites (userId, poiId, createdAt) VALUES (?, ?, ?)',
+      args: [user.id, poiId, new Date().toISOString()],
+    });
+    res.json({ ok: true, poiId });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/favorites/:poiId', requireAuth, async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    await client.execute({
+      sql: 'DELETE FROM user_favorites WHERE userId = ? AND poiId = ?',
+      args: [user.id, req.params.poiId],
+    });
+    res.json({ ok: true, poiId: req.params.poiId });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/plans', requireAuth, async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const rs = await client.execute({
+      sql: 'SELECT id, title, plan_json, created_at, updated_at FROM family_plans WHERE user_id = ? ORDER BY updated_at DESC',
+      args: [user.id],
+    });
+    res.json(
+      rs.rows.map((r) => ({
+        id: String(r.id),
+        title: String(r.title),
+        plan: JSON.parse(String(r.plan_json)),
+        createdAt: String(r.created_at),
+        updatedAt: String(r.updated_at),
+      }))
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/plans', requireAuth, async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const body = req.body as { id?: string; title?: string; plan?: unknown };
+    if (!body || typeof body.plan !== 'object' || body.plan === null) {
+      res.status(400).json({ error: 'Plano inválido (campo "plan" obrigatório).' });
+      return;
+    }
+    const now = new Date().toISOString();
+    const id = body.id || `plan-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    const title = String(body.title || 'Roteiro Familiar').slice(0, 120);
+    await client.execute({
+      sql: `INSERT INTO family_plans (id, user_id, title, plan_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET title = excluded.title, plan_json = excluded.plan_json, updated_at = excluded.updated_at`,
+      args: [id, user.id, title, JSON.stringify(body.plan), now, now],
+    });
+    res.status(201).json({ id, title, updatedAt: now });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/plans/:id', requireAuth, async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    await client.execute({
+      sql: 'DELETE FROM family_plans WHERE id = ? AND user_id = ?',
+      args: [req.params.id, user.id],
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // 12. Tratamento Global de Erros Sem Revelação de Stack Traces
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   const status = err.status || err.statusCode || 500;

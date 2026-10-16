@@ -10,6 +10,8 @@ import { Header } from './components/common/Header';
 import { BottomNav, ParentTab } from './components/common/BottomNav';
 import { AuthModal } from './components/common/AuthModal';
 import { ToastContainer } from './components/common/ToastContainer';
+import { CookieBanner } from './components/common/CookieBanner';
+import { PrivacyModal } from './components/common/PrivacyModal';
 import { ReportModal } from './components/common/ReportModal';
 import { ExploreScreen } from './components/parent/ExploreScreen';
 import { PoiDetailScreen } from './components/parent/PoiDetailScreen';
@@ -279,6 +281,8 @@ const AppContent: React.FC = () => {
 
       {/* Global Modals & Toasts */}
       <AuthModal />
+      <PrivacyModal />
+      <CookieBanner />
       <ToastContainer />
       <ReportModal
         isOpen={reportModalOpen}

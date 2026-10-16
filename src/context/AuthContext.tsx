@@ -16,6 +16,7 @@ interface AuthContextType {
   togglePhoneFrameMode: () => void;
   favorites: string[];
   toggleFavorite: (poiId: string) => void;
+  deleteAccount: () => Promise<boolean>;
   authModalOpen: boolean;
   setAuthModalOpen: (open: boolean) => void;
 }
@@ -163,6 +164,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
+  // Direito ao esquecimento (RGPD): elimina a conta e todos os dados pessoais.
+  const deleteAccount = async (): Promise<boolean> => {
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/account`, { method: 'DELETE', credentials: 'include' });
+      if (!res.ok) return false;
+    } catch {
+      return false;
+    }
+    localStorage.removeItem('juntos_favs');
+    localStorage.removeItem('juntos_user');
+    setFavorites([]);
+    setUser({
+      ...INITIAL_USER,
+      name: 'Família Visitante',
+      email: '',
+      provider: 'guest',
+      role: 'parent',
+    });
+    return true;
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -178,6 +200,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         togglePhoneFrameMode,
         favorites,
         toggleFavorite,
+        deleteAccount,
         authModalOpen,
         setAuthModalOpen,
       }}

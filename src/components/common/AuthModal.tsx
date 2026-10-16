@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { PRIVACY_EVENT } from './CookieBanner';
 
 export const AuthModal: React.FC = () => {
-  const { user, isLoggedIn, login, logout, authModalOpen, setAuthModalOpen, viewMode, setViewMode } = useAuth();
+  const { user, isLoggedIn, login, logout, deleteAccount, authModalOpen, setAuthModalOpen, viewMode, setViewMode } = useAuth();
   const [loadingProvider, setLoadingProvider] = useState<'google' | 'github' | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   if (!authModalOpen) return null;
 
@@ -13,6 +16,17 @@ export const AuthModal: React.FC = () => {
       await login(provider);
     } finally {
       setLoadingProvider(null);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    setDeleting(true);
+    try {
+      const ok = await deleteAccount();
+      if (ok) setAuthModalOpen(false);
+    } finally {
+      setDeleting(false);
+      setConfirmingDelete(false);
     }
   };
 
@@ -117,6 +131,51 @@ export const AuthModal: React.FC = () => {
               <span className="material-symbols-outlined text-[18px]">logout</span>
               <span>Terminar Sessão</span>
             </button>
+
+            {/* Privacidade e Direito ao Esquecimento (RGPD) */}
+            <div className="pt-3 border-t border-surface-container-high flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent(PRIVACY_EVENT))}
+                className="text-xs text-primary font-semibold hover:underline text-left"
+              >
+                Política de Privacidade e Termos
+              </button>
+
+              {confirmingDelete ? (
+                <div className="rounded-xl border border-error/40 bg-error/5 p-3 flex flex-col gap-2">
+                  <p className="font-body-sm text-xs text-on-surface">
+                    Esta ação é <strong>irreversível</strong>. A conta, favoritos e roteiros serão eliminados
+                    definitivamente.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleDeleteAccount}
+                      disabled={deleting}
+                      className="px-3 py-2 rounded-xl bg-error text-on-error text-xs font-semibold disabled:opacity-60"
+                    >
+                      {deleting ? 'A eliminar...' : 'Confirmar eliminação'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingDelete(false)}
+                      className="px-3 py-2 rounded-xl text-on-surface-variant text-xs font-semibold hover:bg-surface-container-high"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmingDelete(true)}
+                  className="text-xs text-on-surface-variant hover:text-error font-semibold text-left"
+                >
+                  Apagar a minha conta e todos os dados
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           /* OAuth Login Options */

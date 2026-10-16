@@ -117,4 +117,28 @@ routes.get('/me', async (c) => {
   return c.json({ user });
 });
 
+// DELETE /api/auth/account — Direito ao esquecimento (RGPD, art. 17.º)
+// Remove a conta e todos os dados pessoais associados. Os reportes da
+// comunidade são anonimizados (mantidos para histórico, sem vínculo ao titular).
+routes.delete('/account', async (c) => {
+  const user = await authenticateRequest(c);
+  if (!user) {
+    return c.json({ error: 'Sessão não iniciada: autenticação obrigatória.' }, 401);
+  }
+
+  const db = getDb(c.env);
+  await db.execute({ sql: 'DELETE FROM sessions WHERE user_id = ?', args: [user.id] });
+  await db.execute({ sql: 'DELETE FROM user_favorites WHERE userId = ?', args: [user.id] });
+  await db.execute({ sql: 'DELETE FROM family_plans WHERE user_id = ?', args: [user.id] });
+  await db.execute({ sql: 'DELETE FROM oauth_accounts WHERE user_id = ?', args: [user.id] });
+  await db.execute({
+    sql: "UPDATE reports SET reporterName = 'Conta eliminada' WHERE reporterName = ?",
+    args: [user.name],
+  });
+  await db.execute({ sql: 'DELETE FROM users WHERE id = ?', args: [user.id] });
+
+  clearSessionCookie(c);
+  return c.json({ success: true, message: 'Conta e dados pessoais eliminados definitivamente.' });
+});
+
 export default routes;

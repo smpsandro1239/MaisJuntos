@@ -439,6 +439,26 @@ app.get('/api/auth/me', async (req, res, next) => {
   }
 });
 
+// DELETE /api/auth/account — Direito ao esquecimento (RGPD, art. 17.º)
+app.delete('/api/auth/account', requireAuth, async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    await client.execute({ sql: 'DELETE FROM sessions WHERE user_id = ?', args: [user.id] });
+    await client.execute({ sql: 'DELETE FROM user_favorites WHERE userId = ?', args: [user.id] });
+    await client.execute({ sql: 'DELETE FROM family_plans WHERE user_id = ?', args: [user.id] });
+    await client.execute({ sql: 'DELETE FROM oauth_accounts WHERE user_id = ?', args: [user.id] });
+    await client.execute({
+      sql: "UPDATE reports SET reporterName = 'Conta eliminada' WHERE reporterName = ?",
+      args: [user.name],
+    });
+    await client.execute({ sql: 'DELETE FROM users WHERE id = ?', args: [user.id] });
+    res.clearCookie(COOKIE_NAME, COOKIE_OPTIONS);
+    return res.json({ success: true, message: 'Conta e dados pessoais eliminados definitivamente.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // 9. Endpoints de POI (Com Proteção RBAC Estrita)
 
 // GET /api/pois (Público)

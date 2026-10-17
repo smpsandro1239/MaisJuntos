@@ -194,7 +194,8 @@ Backend em paridade obrigatória: Worker **e** Express.
 
 ### Commits do repositório público
 `cc4fcb6` (92 ficheiros) → `0b20347` (ESTADO.md) → `e83efd6` (Ciclo 5 F5.1+F5.2)
-→ `dabc795` (RGPD/F5.3) → `3429a16` (F5.6 Docker/split + paridade Express).
+→ `dabc795` (RGPD/F5.3) → `3429a16` (F5.6 Docker/split + paridade Express)
+→ `ce20477` (README/docs) → `60cf80f` (F5.7 registo de utilizadores).
 
 ### DEPLOY DO FRONTEND NA VERCEL (2026-10-16) — CONCLUÍDO
 - Projeto Vercel `maisjuntos` (`prj_73kCGy8dhTDi8iKd3NGdHn40osBE`), produção

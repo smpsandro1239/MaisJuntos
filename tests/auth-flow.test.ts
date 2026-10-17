@@ -188,11 +188,29 @@ async function runAuthFlowSuite() {
   console.log('==========================================================');
   if (fails.length) {
     fails.forEach((f) => console.log(` - ${f.name}: ${f.details}`));
-    process.exit(1);
+    throw new Error(`${fails.length} teste(s) falharam.`);
   }
 }
 
-runAuthFlowSuite().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Hook de limpeza (dev-only): remove as contas efémeras criadas por esta suíte.
+async function cleanupTestData() {
+  try {
+    const res = await fetch(`${BASE_URL}/api/dev/cleanup-test-data`, { method: 'POST' });
+    if (res.ok) {
+      const data = await jsonOf(res);
+      console.log(`\n🧹 Limpeza: ${data.usersDeleted} conta(s) de teste e ${data.poisDeleted} POI(s) removidos.`);
+    } else {
+      console.log('\n🧹 Limpeza: hook indisponível (ALLOW_TEST_HOOKS desativado).');
+    }
+  } catch {
+    console.log('\n🧹 Limpeza: hook indisponível.');
+  }
+}
+
+runAuthFlowSuite()
+  .then(cleanupTestData)
+  .catch(async (err) => {
+    console.error(err);
+    await cleanupTestData();
+    process.exit(1);
+  });

@@ -40,6 +40,7 @@ import {
   recordFailedLogin,
   resetFailedLogins,
   isUserLocked,
+  deleteTestUsers,
 } from './src/db/authDb';
 import {
   sendEmail,
@@ -663,6 +664,28 @@ app.delete('/api/auth/account', requireAuth, async (req, res, next) => {
     ]);
     res.clearCookie(COOKIE_NAME, COOKIE_OPTIONS);
     return res.json({ success: true, message: 'Conta e dados pessoais eliminados definitivamente.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Hook de limpeza para testes locais (BLOCK 5 da revisão F5.7). Desativado por
+// omissão e impossível de ativar em produção. Remove as contas efémeras criadas
+// pelos testes (`fluxo.`, `esc.`, `semmaiuscula.`, `bf.`, `naoexiste.`) e os
+// POIs de teste, evitando poluição da base de dados partilhada.
+const TEST_EMAIL_PREFIXES = ['fluxo.', 'esc.', 'semmaiuscula.', 'bf.', 'naoexiste.'];
+app.post('/api/dev/cleanup-test-data', async (_req, res, next) => {
+  try {
+    if (isProd || process.env.ALLOW_TEST_HOOKS !== 'true') {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    const usersDeleted = await deleteTestUsers(client, TEST_EMAIL_PREFIXES);
+    const testPois = pois.filter((p) => p.id.startsWith('poi-test-') || p.id.startsWith('poi-persist-test-'));
+    for (const t of testPois) {
+      await deletePoiFromDb(t.id);
+    }
+    pois = pois.filter((p) => !testPois.some((t) => t.id === p.id));
+    return res.json({ success: true, usersDeleted, poisDeleted: testPois.length });
   } catch (err) {
     next(err);
   }

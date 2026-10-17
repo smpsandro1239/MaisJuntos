@@ -353,6 +353,23 @@ export async function deleteSession(client: Client, sessionId: string): Promise<
   });
 }
 
+// Limpeza de contas de teste (emails começados por um dos prefixos indicados).
+// Usada apenas pelo hook de desenvolvimento; nunca em produção.
+export async function deleteTestUsers(client: Client, prefixes: string[]): Promise<number> {
+  let deleted = 0;
+  for (const prefix of prefixes) {
+    const like = `${prefix}%`;
+    const sub = 'SELECT id FROM users WHERE email LIKE ?';
+    await client.execute({ sql: `DELETE FROM auth_tokens WHERE user_id IN (${sub})`, args: [like] });
+    await client.execute({ sql: `DELETE FROM sessions WHERE user_id IN (${sub})`, args: [like] });
+    await client.execute({ sql: `DELETE FROM family_plans WHERE user_id IN (${sub})`, args: [like] });
+    await client.execute({ sql: `DELETE FROM oauth_accounts WHERE user_id IN (${sub})`, args: [like] });
+    const rs = await client.execute({ sql: 'DELETE FROM users WHERE email LIKE ?', args: [like] });
+    deleted += Number(rs.rowsAffected || 0);
+  }
+  return deleted;
+}
+
 export async function seedInitialSecurityUsers(client: Client): Promise<void> {
   const usersCountRs = await client.execute('SELECT COUNT(*) as count FROM users');
   const count = Number(usersCountRs.rows[0]?.count || 0);

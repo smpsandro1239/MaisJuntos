@@ -238,7 +238,16 @@ Backend em paridade obrigatória: Worker **e** Express.
   Worker `874f6e65-c98b-4b95-b49c-4d309d810c8e` (a 006 aplicou na Turso de
   produção).
 - **BLOCO 4 (soft vs hard verification) — aguarda decisão do utilizador.**
-- **BLOCO 5 (cleanup de testes / hook dev-only) — PENDENTE.**
+- **BLOCO 5 (limpeza de testes / hook dev-only) — OK.** `tests/auth-flow.test.ts`
+  passa a limpar as contas efémeras que cria, através de um hook
+  **estritamente dev-only**: `POST /api/dev/cleanup-test-data` (Express) só
+  responde quando `NODE_ENV !== 'production'` **e** `ALLOW_TEST_HOOKS === 'true'`
+  — em qualquer outro caso devolve **404**. Remove contas com prefixos de teste
+  (`fluxo.`, `esc.`, `semmaiuscula.`, `bf.`, `naoexiste.`) e os POIs `poi-test-*`
+  / `poi-persist-test-*`, via `deleteTestUsers()` (transação por prefixo).
+  Documentado em `.env.example` (`ALLOW_TEST_HOOKS=false` por omissão). O Worker
+  não expõe o hook. Verificado: hook → 200 localmente, suite 9/9 com
+  `🧹 Limpeza: N conta(s) de teste removidos`; `npm test` 16/16.
 
 ### Correções de dados (2026-10-17)
 - A imagem da **Quinta Pedagógica de Braga** não aparecia: o `coverImage` (e a

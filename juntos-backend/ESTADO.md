@@ -172,6 +172,14 @@ Backend em paridade obrigatória: Worker **e** Express.
     inválidos 400, reenvio sem sessão 401, força bruta 423). Fluxo completo
     registo→verificação→reposição→login validado manualmente (26/26, tokens
     extraídos do email registado no console). lint 0; build OK.
+  - **DEPLOY (2026-10-17)**: Worker `34128ea0-7834-4f17-b2dd-c03789fff2f2`
+    (migração 004 aplicada na Turso de produção); frontend Vercel
+    `maisjuntos-ee3zacp0k`. Verificado em produção (direto ao Worker e via
+    rewrite Vercel): healthz 200, registo 201 + cookie + `emailVerificationSent`,
+    password fraca 400, token de verificação inválido 400, reposição 200 genérica,
+    reenvio sem sessão 401, `pois` 200; bundle contém a UI de verificação e
+    recuperação. Nota: sem `RESEND_API_KEY` no Worker, os emails de produção
+    ficam nos logs (`wrangler tail`) em vez de serem enviados.
 - **F5.5 — PENDENTE.** OAuth real Google/GitHub (bloqueado: precisa de
   client id/secret do utilizador). Implementar código + placeholders e
   documentar.

@@ -69,7 +69,7 @@ export const PROD_INITIAL_POIS: POI[] = [
     rating: 4.8,
     reviewCount: 342,
     images: [],
-    coverImage: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCKD0rO0G-1mE9B4G2eP63gT8bQ7n6lR0c3hXq1z9Yw5v4u3t2s1r0qP9o8n7m6l5k4j3i2h1g0f9e8d7c6b5a4Z3Y2X1W0V9U8T7S6R5Q4P3O2N1M0L9K8J7I6H5G4F3E2D1C0B',
+    coverImage: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAi0jdsHEVA3v22skSJUhplo60Y8g8VmRvkodElTi61qOv6bB-STRwtWrmfZklhdB2uz_G-cd-dUkQXBBUCcH8BHegm4O85ifgXnoq5eCzAHXvJjsJUO2kbUpQcaUC99YfOEiA5pueQ6TSGEuvIvEcJ3pq1T00qom1_x5NFWMndMl6pBd5rtmqRIseySo3UZR1wCgE6PYuNe4465QTwzAD6drnMb_AbFAZ0YrKIjjD_hqzYiWtNIGDEIA',
     distanceMinutes: 12,
     distanceKm: 4.8,
     city: 'Braga',

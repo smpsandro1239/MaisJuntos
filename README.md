@@ -89,6 +89,9 @@ Ver [`.env.example`](.env.example). Variáveis principais:
 - **Frontend (Vercel):** definir as variáveis `VITE_*` e correr `vercel --prod`.
 - **Backend (Cloudflare Workers):** em `juntos-backend/`, correr
   `npx wrangler deploy` (ver `juntos-backend/README.md` e `SECRETS.md`).
+  Secrets de email (produção): `npx wrangler secret put RESEND_API_KEY` e
+  `npx wrangler secret put EMAIL_FROM` (ex.: `+JUNTOS <noreply@dominio>`).
+  Sem eles, os emails ficam apenas nos logs (`npx wrangler tail`).
 - **Contentor (Docker):** `docker build -t maisjuntos .` (multi-stage, Node 22).
 
 ## Testes e qualidade

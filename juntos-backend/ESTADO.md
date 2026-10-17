@@ -224,9 +224,13 @@ Backend em paridade obrigatória: Worker **e** Express.
   é transacional sobre o protocolo HTTP remoto da Turso). Atomicidade provada
   empiricamente numa tabela de rascunho (batch com falha a meio → *rollback*,
   0 linhas). Commit `95ba23e`.
-- **BLOCO 2 (emails em produção) — PENDENTE.** Falta configurar
-  `RESEND_API_KEY` + `EMAIL_FROM` no Worker (e Vercel); sem isso os emails de
-  produção ficam nos logs. Requer conta Resend do utilizador.
+- **BLOCO 2 (emails em produção) — pronto, falta a chave.** O serviço de email
+  (`juntos-backend/src/services/email.ts`) já envia via API do Resend quando
+  `RESEND_API_KEY` existe (e cai para o console caso contrário). Falta apenas
+  definir os secrets no Worker:
+  `npx wrangler secret put RESEND_API_KEY` e `npx wrangler secret put EMAIL_FROM`
+  (ex.: `+JUNTOS <noreply@maisjuntos.pt>`), com o domínio verificado no Resend.
+  Requer a chave/conta do utilizador. Documentado no `README.md` e `.env.example`.
 - **BLOCO 3 (utilizadores pré-existentes `email_verified`) — OK.** A verificação
   é **suave** (o login não é bloqueado por falta de confirmação), pelo que o
   impacto era só de estado/UX. Migração **006** `backfill_system_users_verified`

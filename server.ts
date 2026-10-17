@@ -593,16 +593,19 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res, next) => {
 app.delete('/api/auth/account', requireAuth, async (req, res, next) => {
   try {
     const user = req.user as User;
-    await client.execute({ sql: 'DELETE FROM sessions WHERE user_id = ?', args: [user.id] });
-    await client.execute({ sql: 'DELETE FROM auth_tokens WHERE user_id = ?', args: [user.id] });
-    await client.execute({ sql: 'DELETE FROM user_favorites WHERE userId = ?', args: [user.id] });
-    await client.execute({ sql: 'DELETE FROM family_plans WHERE user_id = ?', args: [user.id] });
-    await client.execute({ sql: 'DELETE FROM oauth_accounts WHERE user_id = ?', args: [user.id] });
-    await client.execute({
-      sql: "UPDATE reports SET reporterName = 'Conta eliminada' WHERE reporterName = ?",
-      args: [user.name],
-    });
-    await client.execute({ sql: 'DELETE FROM users WHERE id = ?', args: [user.id] });
+    // Eliminação atómica: `batch()` do libSQL executa todas as instruções numa
+    // única transação, pelo que uma falha a meio não deixa órfãos em
+    // sessions/auth_tokens/favoritos/planos/oauth. (BEGIN/COMMIT separados não
+    // seriam transacionais sobre o protocolo HTTP remoto da Turso.)
+    await client.batch([
+      { sql: 'DELETE FROM sessions WHERE user_id = ?', args: [user.id] },
+      { sql: 'DELETE FROM auth_tokens WHERE user_id = ?', args: [user.id] },
+      { sql: 'DELETE FROM user_favorites WHERE userId = ?', args: [user.id] },
+      { sql: 'DELETE FROM family_plans WHERE user_id = ?', args: [user.id] },
+      { sql: 'DELETE FROM oauth_accounts WHERE user_id = ?', args: [user.id] },
+      { sql: "UPDATE reports SET reporterName = 'Conta eliminada' WHERE reporterName = ?", args: [user.name] },
+      { sql: 'DELETE FROM users WHERE id = ?', args: [user.id] },
+    ]);
     res.clearCookie(COOKIE_NAME, COOKIE_OPTIONS);
     return res.json({ success: true, message: 'Conta e dados pessoais eliminados definitivamente.' });
   } catch (err) {

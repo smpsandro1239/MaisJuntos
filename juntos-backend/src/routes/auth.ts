@@ -254,16 +254,19 @@ routes.delete('/account', async (c) => {
   }
 
   const db = getDb(c.env);
-  await db.execute({ sql: 'DELETE FROM sessions WHERE user_id = ?', args: [user.id] });
-  await db.execute({ sql: 'DELETE FROM auth_tokens WHERE user_id = ?', args: [user.id] });
-  await db.execute({ sql: 'DELETE FROM user_favorites WHERE userId = ?', args: [user.id] });
-  await db.execute({ sql: 'DELETE FROM family_plans WHERE user_id = ?', args: [user.id] });
-  await db.execute({ sql: 'DELETE FROM oauth_accounts WHERE user_id = ?', args: [user.id] });
-  await db.execute({
-    sql: "UPDATE reports SET reporterName = 'Conta eliminada' WHERE reporterName = ?",
-    args: [user.name],
-  });
-  await db.execute({ sql: 'DELETE FROM users WHERE id = ?', args: [user.id] });
+  // Eliminação atómica: `batch()` do libSQL executa todas as instruções numa
+  // única transação, pelo que uma falha a meio não deixa órfãos em
+  // sessions/auth_tokens/favoritos/planos/oauth. (Deletes planos podiam deixar
+  // a conta removida mas os dados associados por apagar.)
+  await db.batch([
+    { sql: 'DELETE FROM sessions WHERE user_id = ?', args: [user.id] },
+    { sql: 'DELETE FROM auth_tokens WHERE user_id = ?', args: [user.id] },
+    { sql: 'DELETE FROM user_favorites WHERE userId = ?', args: [user.id] },
+    { sql: 'DELETE FROM family_plans WHERE user_id = ?', args: [user.id] },
+    { sql: 'DELETE FROM oauth_accounts WHERE user_id = ?', args: [user.id] },
+    { sql: "UPDATE reports SET reporterName = 'Conta eliminada' WHERE reporterName = ?", args: [user.name] },
+    { sql: 'DELETE FROM users WHERE id = ?', args: [user.id] },
+  ]);
 
   clearSessionCookie(c);
   return c.json({ success: true, message: 'Conta e dados pessoais eliminados definitivamente.' });

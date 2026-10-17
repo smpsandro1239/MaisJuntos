@@ -227,8 +227,16 @@ Backend em paridade obrigatória: Worker **e** Express.
 - **BLOCO 2 (emails em produção) — PENDENTE.** Falta configurar
   `RESEND_API_KEY` + `EMAIL_FROM` no Worker (e Vercel); sem isso os emails de
   produção ficam nos logs. Requer conta Resend do utilizador.
-- **BLOCO 3 (utilizadores pré-existentes `email_verified`) — PENDENTE.**
-  Migração para marcar os 3 utilizadores de sistema + seeds verificados.
+- **BLOCO 3 (utilizadores pré-existentes `email_verified`) — OK.** A verificação
+  é **suave** (o login não é bloqueado por falta de confirmação), pelo que o
+  impacto era só de estado/UX. Migração **006** `backfill_system_users_verified`
+  marca como verificadas as contas de sistema (`usr-admin-system`,
+  `usr-curator-system`, `usr-parent-system`) e as de papel `admin`/`curator`
+  (existiram antes da verificação ser exigida). O seed passa a inserir os
+  utilizadores de sistema já com `email_verified = 1`. Verificado no Express e
+  no Worker de produção (`login` do admin → `emailVerified: true`). Deploy
+  Worker `874f6e65-c98b-4b95-b49c-4d309d810c8e` (a 006 aplicou na Turso de
+  produção).
 - **BLOCO 4 (soft vs hard verification) — aguarda decisão do utilizador.**
 - **BLOCO 5 (cleanup de testes / hook dev-only) — PENDENTE.**
 

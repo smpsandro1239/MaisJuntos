@@ -450,8 +450,8 @@ export async function seedInitialSecurityUsers(client: Client): Promise<void> {
       const passwordHash = await hashPassword(u.password);
       await client.execute({
         sql: `
-          INSERT INTO users (id, email, password_hash, name, role, trust_score, avatar, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO users (id, email, password_hash, name, role, trust_score, avatar, email_verified, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
         `,
         args: [u.id, u.email, passwordHash, u.name, u.role, u.trust_score, u.avatar, now, now],
       });

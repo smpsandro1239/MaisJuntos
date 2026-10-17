@@ -231,6 +231,24 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: '006',
+    name: 'backfill_system_users_verified',
+    up: async (client: Client) => {
+      // Contas de sistema (seed) e de equipa (admin/curador) existiam antes de
+      // existir confirmação de email. Marcá-las como verificadas evita que
+      // apareçam como «não verificado» (a verificação é suave, mas isto mantém
+      // o estado honesto para contas controladas internamente).
+      await client.execute({
+        sql: `UPDATE users
+                SET email_verified = 1, updated_at = ?
+              WHERE email_verified = 0
+                AND (id IN ('usr-admin-system', 'usr-curator-system', 'usr-parent-system')
+                     OR role IN ('admin', 'curator'))`,
+        args: [new Date().toISOString()],
+      });
+    },
+  },
 ];
 
 export async function runMigrations(client: Client): Promise<void> {

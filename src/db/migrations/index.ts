@@ -231,6 +231,22 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: '006',
+    name: 'backfill_system_users_verified',
+    up: async (client: Client) => {
+      // Espelho da migração 006 do Worker: marca contas de sistema/curadoria
+      // como verificadas (existiram antes da verificação de email).
+      await client.execute({
+        sql: `UPDATE users
+                SET email_verified = 1, updated_at = ?
+              WHERE email_verified = 0
+                AND (id IN ('usr-admin-system', 'usr-curator-system', 'usr-parent-system')
+                     OR role IN ('admin', 'curator'))`,
+        args: [new Date().toISOString()],
+      });
+    },
+  },
 ];
 
 export async function runMigrations(client: Client): Promise<void> {

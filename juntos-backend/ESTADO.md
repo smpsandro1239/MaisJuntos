@@ -182,10 +182,14 @@ Backend em paridade obrigatória: Worker **e** Express.
   produção responde 200 a pedidos anónimos (proteção não bloqueia o domínio de
   produção). Manter como está ou desativar explicitamente se se pretender.
 
-### Documentação — PENDENTE (organização/criação)
-Tarefa em curso: organizar e criar documentação do projeto, em especial o
-`README.md` principal (raiz), além de consolidar `docs/`, `ESTADO.md` e guias de
-deploy/ambiente. Registada no TODO.
+### Documentação — EM CURSO
+- **README.md principal (raiz) reescrito** — era o template predefinido do AI
+  Studio; agora descreve o projeto (funcionalidades, arquitetura, setup local,
+  scripts, ambiente, deploy, testes e links).
+- **`docs/README.md` criado** — índice que distingue a documentação principal da
+  auditoria de 13/10 (marcada como fotografia histórica; parte já superada, ex.
+  `missing-requirements.md` afirmava não existir autenticação por sessões).
+- Estado atual do projeto permanece em `juntos-backend/ESTADO.md`.
 
 ## Backlog pedido pelo utilizador (2026-10-16)
 - **Registo de utilizadores completo**: email de confirmação/verificação de

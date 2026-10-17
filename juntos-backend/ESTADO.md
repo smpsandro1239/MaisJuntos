@@ -158,7 +158,42 @@ Backend em paridade obrigatória: Worker **e** Express.
 
 ### Commits do repositório público
 `cc4fcb6` (92 ficheiros) → `0b20347` (ESTADO.md) → `e83efd6` (Ciclo 5 F5.1+F5.2)
-→ `dabc795` (RGPD/F5.3). Todos em `origin/main`.
+→ `dabc795` (RGPD/F5.3) → `3429a16` (F5.6 Docker/split + paridade Express).
+
+### DEPLOY DO FRONTEND NA VERCEL (2026-10-16) — CONCLUÍDO
+- Projeto Vercel `maisjuntos` (`prj_73kCGy8dhTDi8iKd3NGdHn40osBE`), produção
+  `https://maisjuntos-five.vercel.app`, deployment `maisjuntos-hoa3dnvfw-…` pronto.
+- **Correção importante:** `VITE_WS_URL` faltava o caminho `/ws`. O Express
+  aceitava WS em qualquer caminho, mas o Worker só faz upgrade em **`/ws`**
+  (a raiz devolve 404). Corrigido em `.env` e `.env.example`
+  (`wss://juntos-backend.smpsandro1239.workers.dev/ws`) e adicionado como
+  variável de ambiente da Vercel (Production + Preview).
+- `VITE_API_URL` fica vazio: o frontend usa `/api/*` relativo e o `rewrite` do
+  `vercel.json` encaminha para o Worker (evita CORS; cookies são do domínio
+  Vercel).
+- Verificação em produção (tudo verde):
+  - site 200; bundle contém `wss://juntos-backend.smpsandro1239.workers.dev/ws`
+    e os chunks lazy de admin (code-splitting ativo); textos RGPD presentes.
+  - `/api/pois` via Vercel 200 (rewrite); login via Vercel 200 + cookie;
+    `auth/me` 200; `/api/favorites` 200; logout via Vercel 200.
+  - WebSocket (cookie obtido via domínio Vercel) para o Worker: sem cookie 401;
+    com cookie **101 + init (9 POIs, role admin)**; `Origin` inválida 403.
+- Nota: `deploymentProtection` inclui `vercel_authentication` no projeto, mas a
+  produção responde 200 a pedidos anónimos (proteção não bloqueia o domínio de
+  produção). Manter como está ou desativar explicitamente se se pretender.
+
+### Documentação — PENDENTE (organização/criação)
+Tarefa em curso: organizar e criar documentação do projeto, em especial o
+`README.md` principal (raiz), além de consolidar `docs/`, `ESTADO.md` e guias de
+deploy/ambiente. Registada no TODO.
+
+## Backlog pedido pelo utilizador (2026-10-16)
+- **Registo de utilizadores completo**: email de confirmação/verificação de
+  conta, recuperação de password («esqueci-me») com token de redefinição,
+  política/validação de força de password e bloqueio após tentativas falhadas.
+  Worker **e** Express em paridade. (Requer serviço de email — decidir
+  fornecedor: Cloudflare Email Routing / Resend / SMTP.)
+- F5.5 OAuth real Google/GitHub (bloqueado: faltam credenciais do utilizador).
 ## Pré-deploy (2026-10-15, sessão de auditoria)
 - `wrangler dev --remote` (edge real): login bcrypt curator/parent → 200, sem
   erro 1102; auditoria Turso passou de bcrypt 10/pbkdf2 1 para bcrypt 8/pbkdf2 3

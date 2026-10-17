@@ -240,6 +240,15 @@ Backend em paridade obrigatória: Worker **e** Express.
 - **BLOCO 4 (soft vs hard verification) — aguarda decisão do utilizador.**
 - **BLOCO 5 (cleanup de testes / hook dev-only) — PENDENTE.**
 
+### Correções de dados (2026-10-17)
+- A imagem da **Quinta Pedagógica de Braga** não aparecia: o `coverImage` (e a
+  entrada em `images`) do seed apontava para um recurso `aida-public` morto
+  (**HTTP 400**). Substituído por um URL verificado (**HTTP 200 image/jpeg**) em
+  `src/data/production-data.ts`, `src/data/dev-seed.ts` e nos espelhos do
+  Worker (`juntos-backend/src/data/`). A BD de produção já tinha um URL válido;
+  o problema era o seed embutido no cliente (estado inicial antes do WebSocket).
+  Deploy Vercel confirmado (bundle sem o URL morto).
+
 ### Correções de paridade do Express (2026-10-16)
 - CORS: origem não permitida respondia **500** (callback com `new Error`);
   agora existe guarda explícita que responde **403** (preflight e pedidos

@@ -29,7 +29,21 @@ import {
   getSessionWithUser,
   deleteSession,
   comparePassword,
+  hashPassword,
+  createAuthToken,
+  consumeAuthToken,
+  markEmailVerified,
+  setUserPassword,
+  deleteUserSessions,
+  recordFailedLogin,
+  resetFailedLogins,
+  isUserLocked,
 } from './src/db/authDb';
+import {
+  sendEmail,
+  buildVerificationEmail,
+  buildPasswordResetEmail,
+} from './src/services/emailService';
 import { POI, CommunityReport, OperationalMetrics, FamilyPlan, User, UserRole } from './src/types';
 import { INITIAL_POIS, INITIAL_REPORTS, INITIAL_METRICS, INITIAL_FAMILY_PLAN } from './src/data/mockData';
 
@@ -135,16 +149,37 @@ const generalLimiter = rateLimit({
 app.use('/api', generalLimiter);
 
 // 5. Schemas de Validação com Zod
+
+// Proteção contra força bruta e validade dos tokens de autenticação.
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCK_MINUTES = 15;
+const VERIFY_TTL_MINUTES = 60 * 24;
+const RESET_TTL_MINUTES = 60;
+
+// Política de palavra-passe: mínimo 8 carateres, com maiúscula, minúscula e número.
+const passwordPolicy = z
+  .string()
+  .min(8, 'A palavra-passe deve conter pelo menos 8 carateres')
+  .regex(/[a-z]/, 'A palavra-passe deve conter pelo menos uma letra minúscula')
+  .regex(/[A-Z]/, 'A palavra-passe deve conter pelo menos uma letra maiúscula')
+  .regex(/[0-9]/, 'A palavra-passe deve conter pelo menos um número');
+
 const registerSchema = z.object({
   email: z.string().email('Endereço de email inválido'),
-  password: z.string().min(8, 'A palavra-passe deve conter pelo menos 8 carateres'),
+  password: passwordPolicy,
   name: z.string().min(2, 'O nome deve conter pelo menos 2 carateres'),
-  role: z.enum(['parent', 'curator', 'admin']).optional(),
 });
 
 const loginSchema = z.object({
   email: z.string().email('Endereço de email inválido'),
   password: z.string().min(1, 'A palavra-passe é obrigatória'),
+});
+
+const verifyEmailSchema = z.object({ token: z.string().min(10, 'Ligação inválida') });
+const forgotPasswordSchema = z.object({ email: z.string().email('Endereço de email inválido') });
+const resetPasswordSchema = z.object({
+  token: z.string().min(10, 'Ligação inválida'),
+  password: passwordPolicy,
 });
 
 const poiCreateSchema = z.object({
@@ -353,17 +388,18 @@ app.post('/api/auth/register', authLimiter, async (req, res, next) => {
       return res.status(400).json({ error: parseResult.error.issues[0]?.message || 'Dados inválidos' });
     }
 
-    const { email, password, name, role } = parseResult.data;
+    const { email, password, name } = parseResult.data;
     const existing = await findUserByEmail(client, email);
     if (existing) {
       return res.status(409).json({ error: 'Já existe uma conta registada com este endereço de email.' });
     }
 
+    // O registo público cria sempre contas 'parent' (nunca admin/curador).
     const user = await createUser(client, {
       email,
       password,
       name,
-      role: role || 'parent',
+      role: 'parent',
     });
 
     const userAgent = req.headers['user-agent'];
@@ -371,7 +407,12 @@ app.post('/api/auth/register', authLimiter, async (req, res, next) => {
     const sessionId = await createSession(client, user.id, userAgent, ip);
 
     res.cookie(COOKIE_NAME, sessionId, COOKIE_OPTIONS);
-    return res.status(201).json({ success: true, user });
+
+    // Email de confirmação (uma falha de envio não impede o registo).
+    const verifyToken = await createAuthToken(client, user.id, 'verify_email', VERIFY_TTL_MINUTES);
+    await sendEmail({ ...buildVerificationEmail(verifyToken), to: user.email });
+
+    return res.status(201).json({ success: true, user, emailVerificationSent: true });
   } catch (err: any) {
     if (err.message?.includes('EMAIL_DUPLICADO')) {
       return res.status(409).json({ error: 'Já existe uma conta registada com este endereço de email.' });
@@ -391,10 +432,28 @@ app.post('/api/auth/login', authLimiter, async (req, res, next) => {
     const { email, password } = parseResult.data;
     const dbUser = await findUserByEmail(client, email);
 
-    if (!dbUser || !comparePassword(password, dbUser.password_hash)) {
+    if (!dbUser) {
       return res.status(401).json({ error: 'Credenciais inválidas. Verifique o email e a palavra-passe.' });
     }
 
+    // Proteção contra força bruta: conta bloqueada temporariamente.
+    if (isUserLocked(dbUser)) {
+      return res.status(423).json({
+        error: 'Conta temporariamente bloqueada por várias tentativas falhadas. Tente novamente daqui a alguns minutos.',
+      });
+    }
+
+    if (!comparePassword(password, dbUser.password_hash)) {
+      const { locked } = await recordFailedLogin(client, dbUser, MAX_FAILED_ATTEMPTS, LOCK_MINUTES);
+      if (locked) {
+        return res.status(423).json({
+          error: 'Demasiadas tentativas falhadas. A conta ficou bloqueada temporariamente durante 15 minutos.',
+        });
+      }
+      return res.status(401).json({ error: 'Credenciais inválidas. Verifique o email e a palavra-passe.' });
+    }
+
+    await resetFailedLogins(client, dbUser.id);
     const userAgent = req.headers['user-agent'];
     const ip = req.ip || req.socket.remoteAddress;
     const sessionId = await createSession(client, dbUser.id, userAgent, ip);
@@ -408,6 +467,7 @@ app.post('/api/auth/login', authLimiter, async (req, res, next) => {
       role: dbUser.role,
       avatar: dbUser.avatar,
       provider: 'guest',
+      emailVerified: dbUser.email_verified,
       trustScore: dbUser.trust_score,
     };
 
@@ -444,11 +504,97 @@ app.get('/api/auth/me', async (req, res, next) => {
   }
 });
 
+// POST /api/auth/verify-email — confirma o endereço de email com token de uso único.
+app.post('/api/auth/verify-email', async (req, res, next) => {
+  try {
+    const parseResult = verifyEmailSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: parseResult.error.issues[0]?.message || 'Ligação inválida' });
+    }
+
+    const userId = await consumeAuthToken(client, parseResult.data.token, 'verify_email');
+    if (!userId) {
+      return res.status(400).json({ error: 'Ligação de confirmação inválida ou expirada.' });
+    }
+
+    await markEmailVerified(client, userId);
+    return res.json({ success: true, message: 'Email confirmado com sucesso.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/auth/resend-verification — reenvia o email de confirmação (autenticado).
+app.post('/api/auth/resend-verification', requireAuth, async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    if (user.emailVerified) {
+      return res.json({ success: true, message: 'O email já está confirmado.' });
+    }
+
+    const token = await createAuthToken(client, user.id, 'verify_email', VERIFY_TTL_MINUTES);
+    await sendEmail({ ...buildVerificationEmail(token), to: user.email });
+    return res.json({ success: true, message: 'Email de confirmação reenviado.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/auth/forgot-password — pede reposição. Resposta sempre genérica
+// (não revela se o email existe).
+app.post('/api/auth/forgot-password', authLimiter, async (req, res, next) => {
+  try {
+    const parseResult = forgotPasswordSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: parseResult.error.issues[0]?.message || 'Dados inválidos' });
+    }
+
+    const genericResponse = {
+      success: true,
+      message: 'Se existir uma conta associada a este email, enviámos instruções para repor a palavra-passe.',
+    };
+
+    const dbUser = await findUserByEmail(client, parseResult.data.email);
+    if (dbUser && !isUserLocked(dbUser)) {
+      const token = await createAuthToken(client, dbUser.id, 'reset_password', RESET_TTL_MINUTES);
+      await sendEmail({ ...buildPasswordResetEmail(token), to: dbUser.email });
+    }
+
+    return res.json(genericResponse);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/auth/reset-password — define nova palavra-passe com token de uso único.
+app.post('/api/auth/reset-password', authLimiter, async (req, res, next) => {
+  try {
+    const parseResult = resetPasswordSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return res.status(400).json({ error: parseResult.error.issues[0]?.message || 'Dados inválidos' });
+    }
+
+    const userId = await consumeAuthToken(client, parseResult.data.token, 'reset_password');
+    if (!userId) {
+      return res.status(400).json({ error: 'Ligação de reposição inválida ou expirada.' });
+    }
+
+    await setUserPassword(client, userId, hashPassword(parseResult.data.password));
+    await deleteUserSessions(client, userId); // força novo início de sessão em todos os dispositivos
+    await resetFailedLogins(client, userId);
+
+    return res.json({ success: true, message: 'Palavra-passe redefinida com sucesso. Já pode iniciar sessão.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE /api/auth/account — Direito ao esquecimento (RGPD, art. 17.º)
 app.delete('/api/auth/account', requireAuth, async (req, res, next) => {
   try {
     const user = req.user as User;
     await client.execute({ sql: 'DELETE FROM sessions WHERE user_id = ?', args: [user.id] });
+    await client.execute({ sql: 'DELETE FROM auth_tokens WHERE user_id = ?', args: [user.id] });
     await client.execute({ sql: 'DELETE FROM user_favorites WHERE userId = ?', args: [user.id] });
     await client.execute({ sql: 'DELETE FROM family_plans WHERE user_id = ?', args: [user.id] });
     await client.execute({ sql: 'DELETE FROM oauth_accounts WHERE user_id = ?', args: [user.id] });

@@ -7,6 +7,8 @@ export interface Env {
   ALLOWED_ORIGINS: string;
   APP_URL?: string;
   NODE_ENV?: string;
+  RESEND_API_KEY?: string;
+  EMAIL_FROM?: string;
   REALTIME: DurableObjectNamespace;
   RATE_LIMITER: DurableObjectNamespace<RateLimitDO>;
 }

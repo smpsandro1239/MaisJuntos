@@ -13,6 +13,9 @@ export interface DbUser {
   role: UserRole;
   trust_score: number;
   avatar: string;
+  email_verified: boolean;
+  failed_login_attempts: number;
+  locked_until: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -119,6 +122,132 @@ export function generateSessionId(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// ---------------------------------------------------------------------------
+// Tokens de uso único (verificação de email / reposição de palavra-passe)
+// ---------------------------------------------------------------------------
+
+export type AuthTokenType = 'verify_email' | 'reset_password';
+
+function generateToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// O token em claro nunca é persistido: guarda-se apenas o hash SHA-256.
+async function tokenHash(rawToken: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(rawToken));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+export async function createAuthToken(
+  client: Client,
+  userId: string,
+  type: AuthTokenType,
+  ttlMinutes: number
+): Promise<string> {
+  // Invalida tokens anteriores do mesmo tipo (evita acumulação e uso cruzado).
+  await client.execute({
+    sql: 'DELETE FROM auth_tokens WHERE user_id = ? AND type = ?',
+    args: [userId, type],
+  });
+
+  const raw = generateToken();
+  const hash = await tokenHash(raw);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + ttlMinutes * 60 * 1000).toISOString();
+
+  await client.execute({
+    sql: `INSERT INTO auth_tokens (token_hash, user_id, type, expires_at, used_at, created_at)
+          VALUES (?, ?, ?, ?, NULL, ?)`,
+    args: [hash, userId, type, expiresAt, now.toISOString()],
+  });
+
+  return raw;
+}
+
+// Devolve o user_id se o token for válido, não usado e não expirado; consome-o
+// (uso único) eliminando todos os tokens do mesmo tipo desse utilizador.
+export async function consumeAuthToken(
+  client: Client,
+  rawToken: string,
+  type: AuthTokenType
+): Promise<string | null> {
+  if (!rawToken) return null;
+  const hash = await tokenHash(rawToken);
+  const rs = await client.execute({
+    sql: 'SELECT user_id, expires_at, used_at FROM auth_tokens WHERE token_hash = ? AND type = ? LIMIT 1',
+    args: [hash, type],
+  });
+  if (!rs.rows.length) return null;
+  const row = rs.rows[0] as any;
+  if (row.used_at) return null;
+  if (new Date(String(row.expires_at)).getTime() <= Date.now()) return null;
+
+  const userId = String(row.user_id);
+  await client.execute({
+    sql: 'DELETE FROM auth_tokens WHERE user_id = ? AND type = ?',
+    args: [userId, type],
+  });
+  return userId;
+}
+
+export async function markEmailVerified(client: Client, userId: string): Promise<void> {
+  await client.execute({
+    sql: 'UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?',
+    args: [new Date().toISOString(), userId],
+  });
+}
+
+export async function setUserPassword(client: Client, userId: string, passwordHash: string): Promise<void> {
+  await client.execute({
+    sql: 'UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?',
+    args: [passwordHash, new Date().toISOString(), userId],
+  });
+}
+
+export async function deleteUserSessions(client: Client, userId: string): Promise<void> {
+  await client.execute({ sql: 'DELETE FROM sessions WHERE user_id = ?', args: [userId] });
+}
+
+// Proteção contra força bruta: incrementa tentativas e bloqueia temporariamente
+// a conta ao atingir o limite.
+export async function recordFailedLogin(
+  client: Client,
+  dbUser: DbUser,
+  maxAttempts: number,
+  lockMinutes: number
+): Promise<{ locked: boolean }> {
+  const attempts = (dbUser.failed_login_attempts || 0) + 1;
+  const now = new Date();
+
+  if (attempts >= maxAttempts) {
+    const lockedUntil = new Date(now.getTime() + lockMinutes * 60 * 1000).toISOString();
+    await client.execute({
+      sql: 'UPDATE users SET failed_login_attempts = ?, locked_until = ?, updated_at = ? WHERE id = ?',
+      args: [attempts, lockedUntil, now.toISOString(), dbUser.id],
+    });
+    return { locked: true };
+  }
+
+  await client.execute({
+    sql: 'UPDATE users SET failed_login_attempts = ?, updated_at = ? WHERE id = ?',
+    args: [attempts, now.toISOString(), dbUser.id],
+  });
+  return { locked: false };
+}
+
+export async function resetFailedLogins(client: Client, userId: string): Promise<void> {
+  await client.execute({
+    sql: 'UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?',
+    args: [userId],
+  });
+}
+
+export function isUserLocked(dbUser: DbUser): boolean {
+  if (!dbUser.locked_until) return false;
+  return new Date(dbUser.locked_until).getTime() > Date.now();
+}
+
 export async function findUserByEmail(client: Client, email: string): Promise<DbUser | null> {
   const normalized = email.trim().toLowerCase();
   const rs = await client.execute({
@@ -135,6 +264,9 @@ export async function findUserByEmail(client: Client, email: string): Promise<Db
     role: row.role as UserRole,
     trust_score: Number(row.trust_score || 90),
     avatar: String(row.avatar || ''),
+    email_verified: Number(row.email_verified || 0) === 1,
+    failed_login_attempts: Number(row.failed_login_attempts || 0),
+    locked_until: row.locked_until ? String(row.locked_until) : null,
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
   };
@@ -171,6 +303,7 @@ export async function createUser(
     role,
     avatar,
     provider: 'guest',
+    emailVerified: false,
     trustScore: 90,
   };
 }
@@ -213,6 +346,7 @@ export async function getSessionWithUser(client: Client, sessionId: string): Pro
         u.name,
         u.role,
         u.trust_score,
+        u.email_verified,
         u.avatar
       FROM sessions s
       JOIN users u ON s.user_id = u.id
@@ -247,6 +381,7 @@ export async function getSessionWithUser(client: Client, sessionId: string): Pro
       role: row.role as UserRole,
       avatar: String(row.avatar || ''),
       provider: 'guest',
+      emailVerified: Number(row.email_verified || 0) === 1,
       trustScore: Number(row.trust_score || 90),
     },
   };

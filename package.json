@@ -11,7 +11,8 @@
     "start": "tsx server.ts",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/security.test.ts"
+    "test": "tsx tests/security.test.ts",
+    "test:auth": "tsx tests/auth-flow.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -177,6 +177,43 @@ export const migrations: Migration[] = [
       await client.execute('CREATE INDEX IF NOT EXISTS idx_family_plans_user ON family_plans(user_id)');
     },
   },
+  {
+    version: '004',
+    name: 'add_email_verification_reset_tokens_and_login_lockout',
+    up: async (client: Client) => {
+      // Colunas de verificação de email e proteção contra força bruta.
+      try {
+        await client.execute('ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0');
+      } catch {
+        // Coluna já existente
+      }
+      try {
+        await client.execute('ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER DEFAULT 0');
+      } catch {
+        // Coluna já existente
+      }
+      try {
+        await client.execute('ALTER TABLE users ADD COLUMN locked_until TEXT');
+      } catch {
+        // Coluna já existente
+      }
+
+      // Tokens de uso único (verificação de email e reposição de palavra-passe).
+      // Guarda-se apenas o HASH do token — o valor em claro só viaja no email.
+      await client.execute(`
+        CREATE TABLE IF NOT EXISTS auth_tokens (
+          token_hash TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          type TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          used_at TEXT,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+      `);
+      await client.execute('CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(user_id)');
+    },
+  },
 ];
 
 export async function runMigrations(client: Client): Promise<void> {

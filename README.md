@@ -23,6 +23,9 @@ Plataforma para famílias descobrirem e partilharem atividades infantis e famili
 
 **Transversal**
 - Autenticação por sessão (cookie `HttpOnly`), RBAC (admin / curador / pai).
+- Registo de conta com **confirmação de email**, **reposição de palavra-passe**
+  (ligações de uso único por email) e **política de palavra-passe forte**.
+- Proteção contra força bruta: bloqueio temporário após tentativas falhadas.
 - WebSocket em tempo real (Durable Object com hibernação).
 - Rate limiting (Durable Object).
 - Conformidade RGPD: banner de consentimento, política de privacidade e direito ao esquecimento.
@@ -58,6 +61,7 @@ Pré-requisitos: Node.js 20+ e uma base de dados Turso (URL + token).
 | `npm run build` | Build do frontend para `dist/` |
 | `npm run lint` | Verificação de tipos (`tsc --noEmit`) |
 | `npm test` | Testes de segurança (`tests/security.test.ts`) |
+| `npm run test:auth` | Testes de registo, reposição de palavra-passe e força bruta |
 | `npm start` | Servidor de produção (`tsx server.ts`) |
 | `npm run server` | Apenas o backend Express |
 
@@ -71,6 +75,9 @@ Ver [`.env.example`](.env.example). Variáveis principais:
 - `VITE_WS_URL` — WebSocket; **tem de incluir `/ws`**
   (`wss://juntos-backend.smpsandro1239.workers.dev/ws`).
 - `VITE_API_URL` — deixar vazio para usar o rewrite do Vercel.
+- `RESEND_API_KEY`, `EMAIL_FROM` — envio de emails transacionais (verificação de
+  conta e reposição de palavra-passe). Sem a chave, os emails são registados no
+  console (modo desenvolvimento).
 - `ADMIN_PASSWORD`, `CURATOR_PASSWORD`, `PARENT_PASSWORD` — apenas para o seed
   inicial (tabela `users` vazia); nunca versionar valores reais.
 

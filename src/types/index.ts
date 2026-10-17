@@ -7,6 +7,7 @@ export interface User {
   avatar: string;
   role: UserRole;
   provider: 'google' | 'github' | 'guest';
+  emailVerified?: boolean;
   trustScore?: number;
   familyProfile?: {
     children: Array<{ name: string; age: number; id: string }>;

@@ -1,6 +1,6 @@
 # ESTADO DA MIGRAÇÃO
 
-Atualizado: 2026-10-16 (sessão atual)
+Atualizado: 2026-10-17 (sessão atual)
 
 ## MODO EXECUÇÃO DENSA
 Por resposta, executa o MÁXIMO de ações possível antes de o contexto acabar.
@@ -136,6 +136,42 @@ Backend em paridade obrigatória: Worker **e** Express.
   (bundle principal **631→515 kB**, gzip 164→147 kB; ecrãs de admin em 9
   chunks). Validação real: `docker build` OK; contentor serve estático 200,
   `/api/pois` 200, `login` 401, origem hostil 403.
+- **F5.7 — OK (registo de utilizadores completo).** Worker **e** Express em
+  paridade:
+  - Migração **004** `add_email_verification_reset_tokens_and_login_lockout`:
+    `users.email_verified` (0/1), `users.failed_login_attempts`,
+    `users.locked_until` e tabela `auth_tokens` (PK `token_hash`, `user_id`,
+    `type`, `expires_at`, `used_at`, `created_at`, FK ON DELETE CASCADE) +
+    índice `idx_auth_tokens_user`. Aplicada no Express (log «Migração 004
+    concluída»).
+  - **Tokens de uso único**: o valor em claro (32 bytes hex) só existe no email;
+    a BD guarda apenas o SHA-256 (`token_hash`). Confirmar email / redefinir
+    password consome o token e invalida os restantes do mesmo tipo. TTL:
+    verificação 24 h, reposição 60 min.
+  - **Rotas novas**: `POST /api/auth/verify-email`,
+    `POST /api/auth/resend-verification` (exige sessão),
+    `POST /api/auth/forgot-password` (resposta genérica 200 — sem enumeração de
+    emails), `POST /api/auth/reset-password`; `DELETE /api/auth/account` passou
+    a eliminar também os `auth_tokens`.
+  - **Registo endurecido**: força sempre `role:'parent'` (corrige escalada de
+    privilégios anterior), envia email de confirmação e devolve
+    `emailVerificationSent`.
+  - **Política de password** (zod): mín. 8, com minúscula, maiúscula e número.
+  - **Bloqueio por força bruta**: 5 falhas → conta bloqueada 15 min (**HTTP
+    423**), mesmo com password correta depois.
+  - **Email provider-agnostic** (`src/services/email.ts` /
+    `src/services/emailService.ts`): se `RESEND_API_KEY` definido, envia pela API
+    Resend; senão regista no console (dev). `sendEmail` **nunca lança** — uma
+    falha de email não quebra a autenticação.
+  - **Frontend**: `AuthContext` reescrito (login/registo/recuperação/reposição,
+    tratamento de `?verifyToken=`/`?resetToken=`, reenvio), `AuthModal` com os
+    novos formulários e `VerifyEmailBanner` (aviso de email não confirmado).
+  - **Testes**: `tests/security.test.ts` **16/16** (sem regressão); nova suíte
+    `tests/auth-flow.test.ts` (`npm run test:auth`) **9/9** (validação de
+    password, sem escalada de cargo, resposta genérica de reposição, tokens
+    inválidos 400, reenvio sem sessão 401, força bruta 423). Fluxo completo
+    registo→verificação→reposição→login validado manualmente (26/26, tokens
+    extraídos do email registado no console). lint 0; build OK.
 - **F5.5 — PENDENTE.** OAuth real Google/GitHub (bloqueado: precisa de
   client id/secret do utilizador). Implementar código + placeholders e
   documentar.
@@ -190,13 +226,13 @@ Backend em paridade obrigatória: Worker **e** Express.
   auditoria de 13/10 (marcada como fotografia histórica; parte já superada, ex.
   `missing-requirements.md` afirmava não existir autenticação por sessões).
 - Estado atual do projeto permanece em `juntos-backend/ESTADO.md`.
+- `.env.example` atualizado com `RESEND_API_KEY` e `EMAIL_FROM`; README com a
+  funcionalidade de registo completo e o novo script `npm run test:auth`.
 
 ## Backlog pedido pelo utilizador (2026-10-16)
-- **Registo de utilizadores completo**: email de confirmação/verificação de
-  conta, recuperação de password («esqueci-me») com token de redefinição,
-  política/validação de força de password e bloqueio após tentativas falhadas.
-  Worker **e** Express em paridade. (Requer serviço de email — decidir
-  fornecedor: Cloudflare Email Routing / Resend / SMTP.)
+- **Registo de utilizadores completo** — **CONCLUÍDO (F5.7, ver acima).**
+  Resta apenas configurar `RESEND_API_KEY`/`EMAIL_FROM` (Worker e Vercel) para
+  envio de emails real em produção; até lá, o conteúdo é registado no console.
 - F5.5 OAuth real Google/GitHub (bloqueado: faltam credenciais do utilizador).
 ## Pré-deploy (2026-10-15, sessão de auditoria)
 - `wrangler dev --remote` (edge real): login bcrypt curator/parent → 200, sem

@@ -260,6 +260,92 @@ export async function createUser(
   };
 }
 
+// ---------------------------------------------------------------------------
+// OAuth (F5.5) — espelho do Worker (juntos-backend/src/db/auth.ts)
+// ---------------------------------------------------------------------------
+
+function mapDbUser(row: any): DbUser {
+  return {
+    id: String(row.id),
+    email: String(row.email),
+    password_hash: String(row.password_hash),
+    name: String(row.name),
+    role: row.role as UserRole,
+    trust_score: Number(row.trust_score || 90),
+    avatar: String(row.avatar || ''),
+    email_verified: Number(row.email_verified || 0) === 1,
+    failed_login_attempts: Number(row.failed_login_attempts || 0),
+    locked_until: row.locked_until ? String(row.locked_until) : null,
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at),
+  };
+}
+
+export async function findOAuthUser(
+  client: Client,
+  provider: string,
+  providerUserId: string
+): Promise<DbUser | null> {
+  const rs = await client.execute({
+    sql: `
+      SELECT u.* FROM oauth_accounts oa
+      JOIN users u ON u.id = oa.user_id
+      WHERE oa.provider = ? AND oa.provider_user_id = ?
+      LIMIT 1
+    `,
+    args: [provider, providerUserId],
+  });
+  if (!rs.rows.length) return null;
+  return mapDbUser(rs.rows[0] as any);
+}
+
+export async function linkOAuthAccount(
+  client: Client,
+  userId: string,
+  provider: string,
+  providerUserId: string
+): Promise<void> {
+  await client.execute({
+    sql: `
+      INSERT INTO oauth_accounts (id, user_id, provider, provider_user_id, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `,
+    args: [`oa-${crypto.randomUUID()}`, userId, provider, providerUserId, new Date().toISOString()],
+  });
+}
+
+export async function createOAuthUser(
+  client: Client,
+  data: { email: string; name: string; avatar?: string; emailVerified?: boolean }
+): Promise<User> {
+  const normalizedEmail = data.email.trim().toLowerCase();
+  const userId = `usr-${crypto.randomUUID()}`;
+  const unusableHash = hashPassword(`oauth:${crypto.randomUUID()}`);
+  const now = new Date().toISOString();
+  const avatar =
+    data.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(data.name)}`;
+  const verified = data.emailVerified ? 1 : 0;
+
+  await client.execute({
+    sql: `
+      INSERT INTO users (id, email, password_hash, name, role, trust_score, avatar, email_verified, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'parent', 90, ?, ?, ?, ?)
+    `,
+    args: [userId, normalizedEmail, unusableHash, data.name, avatar, verified, now, now],
+  });
+
+  return {
+    id: userId,
+    email: normalizedEmail,
+    name: data.name,
+    role: 'parent',
+    avatar,
+    provider: 'guest',
+    emailVerified: Boolean(data.emailVerified),
+    trustScore: 90,
+  };
+}
+
 export async function createSession(
   client: Client,
   userId: string,

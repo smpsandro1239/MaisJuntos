@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { PRIVACY_EVENT } from './CookieBanner';
+import { API_BASE } from '../../config';
 
 const OAuthButtons: React.FC<{ disabled: boolean; loadingProvider: 'google' | 'github' | null; onProvider: (p: 'google' | 'github') => void }> = ({
   disabled,
@@ -88,8 +89,22 @@ export const AuthModal: React.FC = () => {
 
   const handleProviderLogin = async (provider: 'google' | 'github') => {
     setLoadingProvider(provider);
+    setError(null);
     try {
-      await login(provider);
+      // Sonda o endpoint /start com redirecionamento manual: um 302 sai como
+      // resposta opaca (status 0) e prosseguimos com a navegação; um erro
+      // declarado (ex.: 503 provider não configurado) é mostrado ao utilizador.
+      const res = await fetch(`${API_BASE}/api/auth/oauth/${provider}/start`, {
+        redirect: 'manual',
+      });
+      if (res.status && res.status !== 0) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(data.error || 'Não foi possível iniciar a autenticação social.');
+        return;
+      }
+      login(provider);
+    } catch {
+      setError('Erro de rede ao iniciar a autenticação social.');
     } finally {
       setLoadingProvider(null);
     }

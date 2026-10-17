@@ -92,6 +92,11 @@ Ver [`.env.example`](.env.example). Variáveis principais:
   Secrets de email (produção): `npx wrangler secret put RESEND_API_KEY` e
   `npx wrangler secret put EMAIL_FROM` (ex.: `+JUNTOS <noreply@dominio>`).
   Sem eles, os emails ficam apenas nos logs (`npx wrangler tail`).
+  Login social (Google/GitHub): `npx wrangler secret put GOOGLE_CLIENT_ID`,
+  `GOOGLE_CLIENT_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` (e, se
+  necessário, `OAUTH_REDIRECT_BASE`). Registe em cada provider o redirect URI
+  `<backend>/api/auth/oauth/<provider>/callback`. Sem chaves, o endpoint devolve
+  503 (a app mostra um aviso).
 - **Contentor (Docker):** `docker build -t maisjuntos .` (multi-stage, Node 22).
 
 ## Testes e qualidade

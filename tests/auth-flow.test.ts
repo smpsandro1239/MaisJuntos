@@ -182,6 +182,40 @@ async function runAuthFlowSuite() {
     assert('7. Força bruta bloqueia a conta (423)', false, err.message);
   }
 
+  // 8. Login social (F5.5): endpoints gated e proteção de state
+  try {
+    const bad = await fetch(`${BASE_URL}/api/auth/oauth/facebook/start`, { redirect: 'manual' });
+    assert('8. Provider OAuth inválido rejeitado (400)', bad.status === 400, `status ${bad.status}`);
+  } catch (err: any) {
+    assert('8. Provider de autenticação inválido', false, err.message);
+  }
+
+  try {
+    const res = await fetch(`${BASE_URL}/api/auth/oauth/google/start`, { redirect: 'manual' });
+    const data = await jsonOf(res);
+    assert(
+      '8b. Provider social não configurado responde 503',
+      res.status === 503 && data.code === 'OAUTH_NOT_CONFIGURED',
+      `status ${res.status}, code ${data.code}`
+    );
+  } catch (err: any) {
+    assert('8b. Provider não configurado devolve 503', false, err.message);
+  }
+
+  try {
+    const res = await fetch(`${BASE_URL}/api/auth/oauth/google/callback?code=x&state=invalido`, {
+      redirect: 'manual',
+    });
+    const location = res.headers.get('location') || '';
+    assert(
+      '8c. Callback com state inválido rejeitado',
+      res.status === 302 && /oauthError=invalid_state/.test(location),
+      `status ${res.status}, location ${location}`
+    );
+  } catch (err: any) {
+    assert('8c. Callback com state inválido rejeitado', false, err.message);
+  }
+
   const fails = results.filter((r) => !r.passed);
   console.log('\n==========================================================');
   console.log(`📊 RESUMO: ${results.length - fails.length}/${results.length} aprovados`);

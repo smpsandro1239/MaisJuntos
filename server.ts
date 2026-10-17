@@ -3,6 +3,7 @@ import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import helmet from 'helmet';
 import cors from 'cors';
@@ -41,6 +42,9 @@ import {
   resetFailedLogins,
   isUserLocked,
   deleteTestUsers,
+  findOAuthUser,
+  linkOAuthAccount,
+  createOAuthUser,
 } from './src/db/authDb';
 import {
   sendEmail,
@@ -680,6 +684,213 @@ app.delete('/api/auth/account', requireAuth, async (req, res, next) => {
     return res.json({ success: true, message: 'Conta e dados pessoais eliminados definitivamente.' });
   } catch (err) {
     next(err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Login social (F5.5) — Google e GitHub. Espelho de
+// juntos-backend/src/routes/oauth.ts. Gated: 503 se as chaves não estiverem
+// definidas (GOOGLE_CLIENT_ID/SECRET, GITHUB_CLIENT_ID/SECRET).
+// ---------------------------------------------------------------------------
+interface OAuthProfile {
+  id: string;
+  email: string;
+  name: string;
+  avatar?: string;
+  emailVerified: boolean;
+}
+
+interface OAuthProviderConfig {
+  authorizeUrl: string;
+  tokenUrl: string;
+  scope: string;
+  clientId?: string;
+  clientSecret?: string;
+}
+
+const OAUTH_PROVIDERS: Record<'google' | 'github', OAuthProviderConfig> = {
+  google: {
+    authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenUrl: 'https://oauth2.googleapis.com/token',
+    scope: 'openid email profile',
+    clientId: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+  },
+  github: {
+    authorizeUrl: 'https://github.com/login/oauth/authorize',
+    tokenUrl: 'https://github.com/login/oauth/access_token',
+    scope: 'read:user user:email',
+    clientId: process.env.GITHUB_CLIENT_ID,
+    clientSecret: process.env.GITHUB_CLIENT_SECRET,
+  },
+};
+
+const OAUTH_STATE_COOKIE = 'juntos_oauth_state';
+const APP_BASE_URL = (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+
+function oauthRedirectBase(req: express.Request): string {
+  const configured = (process.env.OAUTH_REDIRECT_BASE || '').replace(/\/+$/, '');
+  if (configured) return configured;
+  return `${req.protocol}://${req.get('host')}`;
+}
+
+function oauthCallbackUrl(req: express.Request, provider: string): string {
+  return `${oauthRedirectBase(req)}/api/auth/oauth/${provider}/callback`;
+}
+
+async function exchangeOAuthCode(
+  provider: 'google' | 'github',
+  cfg: OAuthProviderConfig,
+  req: express.Request,
+  code: string
+): Promise<OAuthProfile | null> {
+  const tokenRes = await fetch(cfg.tokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    body: new URLSearchParams({
+      client_id: cfg.clientId || '',
+      client_secret: cfg.clientSecret || '',
+      code,
+      redirect_uri: oauthCallbackUrl(req, provider),
+      grant_type: 'authorization_code',
+    }),
+  });
+  if (!tokenRes.ok) return null;
+  const tokenJson: any = await tokenRes.json().catch(() => null);
+  const accessToken: string | undefined = tokenJson?.access_token;
+  if (!accessToken) return null;
+
+  if (provider === 'google') {
+    const res = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return null;
+    const u: any = await res.json().catch(() => null);
+    if (!u?.email) return null;
+    return {
+      id: String(u.sub),
+      email: String(u.email),
+      name: String(u.name || String(u.email).split('@')[0]),
+      avatar: u.picture ? String(u.picture) : undefined,
+      emailVerified: u.email_verified === true,
+    };
+  }
+
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'maisjuntos',
+  };
+  const res = await fetch('https://api.github.com/user', { headers });
+  if (!res.ok) return null;
+  const g: any = await res.json().catch(() => null);
+  if (!g?.id) return null;
+
+  let email: string | undefined = g.email || undefined;
+  let emailVerified = Boolean(email);
+  if (!email) {
+    const eRes = await fetch('https://api.github.com/user/emails', { headers });
+    if (eRes.ok) {
+      const emails = ((await eRes.json().catch(() => [])) as any[]) || [];
+      const chosen = emails.find((e) => e.primary && e.verified) || emails.find((e) => e.verified);
+      email = chosen?.email;
+      emailVerified = Boolean(chosen?.verified);
+    }
+  }
+  if (!email) return null;
+
+  return {
+    id: String(g.id),
+    email,
+    name: String(g.name || g.login || email.split('@')[0]),
+    avatar: g.avatar_url ? String(g.avatar_url) : undefined,
+    emailVerified,
+  };
+}
+
+// GET /api/auth/oauth/:provider/start — redireciona para o provider.
+app.get('/api/auth/oauth/:provider/start', authLimiter, (req, res) => {
+  const provider = req.params.provider as 'google' | 'github';
+  const cfg = OAUTH_PROVIDERS[provider];
+  if (!cfg) return res.status(400).json({ error: 'Provider de autenticação não suportado.' });
+  if (!cfg.clientId || !cfg.clientSecret) {
+    return res
+      .status(503)
+      .json({ error: 'O login social não está configurado neste servidor.', code: 'OAUTH_NOT_CONFIGURED' });
+  }
+
+  const state = crypto.randomBytes(16).toString('hex');
+  res.cookie(OAUTH_STATE_COOKIE, `${provider}:${state}`, {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: 'lax',
+    maxAge: 600 * 1000,
+    path: '/',
+  });
+
+  const params = new URLSearchParams({
+    client_id: cfg.clientId,
+    redirect_uri: oauthCallbackUrl(req, provider),
+    response_type: 'code',
+    scope: cfg.scope,
+    state,
+  });
+  if (provider === 'google') params.set('access_type', 'online');
+  return res.redirect(`${cfg.authorizeUrl}?${params.toString()}`);
+});
+
+// GET /api/auth/oauth/:provider/callback — troca o código e abre sessão.
+app.get('/api/auth/oauth/:provider/callback', async (req, res) => {
+  const provider = req.params.provider as 'google' | 'github';
+  const cfg = OAUTH_PROVIDERS[provider];
+  if (!cfg) return res.redirect(`${APP_BASE_URL}/?oauthError=unsupported_provider`);
+
+  const { error: providerError, code, state } = req.query as Record<string, string | undefined>;
+  const cookieValue = req.cookies[OAUTH_STATE_COOKIE];
+  res.clearCookie(OAUTH_STATE_COOKIE, { path: '/' });
+
+  // Validação de state (CSRF) primeiro — não depende da configuração do provider.
+  if (providerError) {
+    return res.redirect(`${APP_BASE_URL}/?oauthError=${encodeURIComponent(providerError)}`);
+  }
+  if (!code || !state || !cookieValue || cookieValue !== `${provider}:${state}`) {
+    return res.redirect(`${APP_BASE_URL}/?oauthError=invalid_state`);
+  }
+
+  if (!cfg.clientId || !cfg.clientSecret) return res.redirect(`${APP_BASE_URL}/?oauthError=not_configured`);
+
+  try {
+    const profile = await exchangeOAuthCode(provider, cfg, req, code);
+    if (!profile) return res.redirect(`${APP_BASE_URL}/?oauthError=profile_unavailable`);
+
+    let dbUser = await findOAuthUser(client, provider, profile.id);
+    if (!dbUser) {
+      const existing = await findUserByEmail(client, profile.email);
+      if (existing) {
+        await linkOAuthAccount(client, existing.id, provider, profile.id);
+        if (profile.emailVerified && !existing.email_verified) {
+          await markEmailVerified(client, existing.id);
+        }
+        dbUser = existing;
+      } else {
+        const created = await createOAuthUser(client, {
+          email: profile.email,
+          name: profile.name,
+          avatar: profile.avatar,
+          emailVerified: profile.emailVerified,
+        });
+        await linkOAuthAccount(client, created.id, provider, profile.id);
+        dbUser = await findUserByEmail(client, created.email);
+      }
+    }
+    if (!dbUser) return res.redirect(`${APP_BASE_URL}/?oauthError=account_error`);
+
+    const sessionId = await createSession(client, dbUser.id, req.headers['user-agent'], req.ip);
+    res.cookie(COOKIE_NAME, sessionId, COOKIE_OPTIONS);
+    return res.redirect(`${APP_BASE_URL}/?oauth=success`);
+  } catch (err) {
+    console.error('[OAuth] Falha no callback:', (err as any)?.message || 'erro desconhecido');
+    return res.redirect(`${APP_BASE_URL}/?oauthError=callback_failed`);
   }
 });
 

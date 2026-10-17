@@ -101,8 +101,8 @@ confirmado). Push autenticado por Git Credential Manager.
   reprovisionar utilizadores.
 
 ## Próximos passos sugeridos (loop +JUNTOS)
-Ciclo 5 está em execução (F5.1–F5.4 e F5.6 feitos). Falta F5.5 (OAuth real),
-bloqueado por credenciais Google/GitHub do utilizador.
+Ciclo 5 concluído: F5.1–F5.6 e F5.8 feitos; F5.5 (login social) tem o código
+pronto e verificado, restando fornecer as credenciais Google/GitHub para ativar.
 
 ## CICLO 5 — NOVAS FUNCIONALIDADES (2026-10-16)
 Backend em paridade obrigatória: Worker **e** Express.
@@ -210,9 +210,21 @@ Backend em paridade obrigatória: Worker **e** Express.
     reporte com foto → 201 + `hasPhotoProof` + `photoUrl`; `GET
     /api/reports/:id/photo` → 200 `image/jpeg`; `new_place` inválido → 400 e
     válido → 201.
-- **F5.5 — PENDENTE.** OAuth real Google/GitHub (bloqueado: precisa de
-  client id/secret do utilizador). Implementar código + placeholders e
-  documentar.
+- **F5.5 — OK (código pronto; faltam apenas as chaves).** Login social real
+  Google/GitHub via Authorization Code, implementado em **ambos** os backends:
+  `GET /api/auth/oauth/:provider/start` (define cookie de state CSRF e redireciona
+  para o provider) e `GET /api/auth/oauth/:provider/callback` (valida state,
+  troca o código, obtém o perfil, liga/cria a conta em `oauth_accounts`+`users`,
+  abre sessão e volta ao frontend com `?oauth=success`). Sem chaves, `/start`
+  devolve **503** `OAUTH_NOT_CONFIGURED` e o frontend mostra um aviso (sonda com
+  `redirect: 'manual'`) em vez de navegar. O mock em `AuthContext.login` foi
+  removido. Novo ficheiro `juntos-backend/src/routes/oauth.ts`; helpers
+  `findOAuthUser`/`linkOAuthAccount`/`createOAuthUser` em `db/auth.ts` e
+  `db/authDb.ts`. Verificado (sem chaves): provider inválido → 400, não
+  configurado → 503, callback com state inválido → 302 `?oauthError=invalid_state`;
+  com credenciais fictícias, `/start` → 302 com `client_id`/`redirect_uri`/`scope`/
+  `state` corretos. `npm test` 16/16, `npm run test:auth` **12/12**, `lint` e
+  `build` OK.
 
 ### Revisão externa do F5.7 (2026-10-17)
 - **BLOCO 1 (transação no DELETE /api/auth/account) — OK.** Verificou-se que
@@ -329,7 +341,10 @@ Backend em paridade obrigatória: Worker **e** Express.
 - **Registo de utilizadores completo** — **CONCLUÍDO (F5.7, ver acima).**
   Resta apenas configurar `RESEND_API_KEY`/`EMAIL_FROM` (Worker e Vercel) para
   envio de emails real em produção; até lá, o conteúdo é registado no console.
-- F5.5 OAuth real Google/GitHub (bloqueado: faltam credenciais do utilizador).
+- F5.5 Login social Google/GitHub — **código implementado e verificado**
+  (Worker + Express + frontend); falta apenas definir as chaves do utilizador
+  (`GOOGLE_CLIENT_ID`/`SECRET`, `GITHUB_CLIENT_ID`/`SECRET`) e registar os
+  redirect URIs nos providers.
 ## Pré-deploy (2026-10-15, sessão de auditoria)
 - `wrangler dev --remote` (edge real): login bcrypt curator/parent → 200, sem
   erro 1102; auditoria Turso passou de bcrypt 10/pbkdf2 1 para bcrypt 8/pbkdf2 3

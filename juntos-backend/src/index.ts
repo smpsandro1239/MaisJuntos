@@ -3,6 +3,7 @@ import type { AppEnv } from './security';
 import { corsMiddleware, rateLimit, securityHeaders } from './security';
 import { initDatabase } from './db/index';
 import authRoutes from './routes/auth';
+import oauthRoutes from './routes/oauth';
 import poiRoutes from './routes/pois';
 import reportRoutes from './routes/reports';
 import miscRoutes from './routes/misc';
@@ -28,6 +29,7 @@ app.use('/api/*', async (c, next) => {
 });
 
 app.route('/api/auth', authRoutes);
+app.route('/api/auth/oauth', oauthRoutes);
 app.route('/api/pois', poiRoutes);
 app.route('/api/reports', reportRoutes);
 app.route('/api', miscRoutes);

@@ -14,7 +14,7 @@ export interface AuthActionResult {
 interface AuthContextType {
   user: User;
   isLoggedIn: boolean;
-  login: (provider: 'google' | 'github', customName?: string, customEmail?: string) => Promise<void>;
+  login: (provider: 'google' | 'github') => void;
   logout: () => Promise<void>;
   isDarkMode: boolean;
   toggleDarkMode: () => void;
@@ -149,6 +149,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     })();
   }, []);
 
+  // Regresso do login social (F5.5): `?oauth=success` re-hidrata a sessão;
+  // `?oauthError=` mostra uma mensagem de erro no modal.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauth = params.get('oauth');
+    const oauthError = params.get('oauthError');
+    if (!oauth && !oauthError) return;
+    window.history.replaceState({}, '', window.location.pathname);
+
+    if (oauth === 'success') {
+      (async () => {
+        try {
+          const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include' });
+          if (!res.ok) return;
+          const data = (await res.json()) as { user: User | null };
+          if (data?.user) setUser(data.user);
+        } catch {
+          // ignora — o utilizador continua como convidado
+        }
+      })();
+    } else if (oauthError) {
+      setAuthModalMessage(
+        'Não foi possível concluir a autenticação social. Tente novamente ou use email e palavra-passe.'
+      );
+      setAuthModalView('message');
+      setAuthModalOpenState(true);
+    }
+  }, []);
+
   // Sync favorites (apenas para visitantes; utilizadores com sessão vivem na BD).
   useEffect(() => {
     if (user.provider === 'guest') {
@@ -188,45 +217,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const login = async (provider: 'google' | 'github', customName?: string, customEmail?: string) => {
-    try {
-      const res = await fetch(`${API_BASE}/api/auth/login`, { credentials: 'include',
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider,
-          name: customName,
-          email: customEmail,
-          role: provider === 'google' ? 'admin' : 'curator',
-        }),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { user: User };
-        setUser(data.user);
-        setAuthModalOpen(false);
-      }
-    } catch {
-      // Fallback
-      setUser({
-        id: `usr-${Date.now()}`,
-        name: customName || (provider === 'google' ? 'Marta Ferreira (Google)' : 'Sandro Dev (GitHub)'),
-        email: customEmail || (provider === 'google' ? 'smpsandro1239@gmail.com' : 'sandro@github.com'),
-        avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuD777yteutiVWDrQ1kHg2U1_eXRXlpuiW3d6Bhzb-dIhRY9f-SIWYEaD7T6gTUiykdccClFIzDvD0P8XLNhVWFlrrCi16NgylBxFM0Wd_laBk37KoIVFk_rDzriDRPaJyuiVHnPoDuM19_OUx1Fhz-ME0AFLWhYUCL21r6IuxcVb1mjz8n5ZPIXycM0LjB9pgJ5rOEZUcbx8Y-aw4Bj4G1yCIS4wv_tm21PNb8j0Tul_y6vuYciyR3PoQ',
-        role: 'admin',
-        provider,
-        trustScore: 98,
-        familyProfile: {
-          city: 'Braga',
-          favorites: ['poi-planetario-braga', 'poi-parque-ponte'],
-          children: [
-            { id: 'c1', name: 'Alice', age: 4 },
-            { id: 'c2', name: 'Tomás', age: 7 },
-          ],
-          maxBudget: 40,
-        },
-      });
-      setAuthModalOpen(false);
-    }
+  // Login social real (F5.5): inicia o fluxo Authorization Code no backend.
+  // O regresso é tratado pelo efeito que lê `?oauth=success` / `?oauthError=`.
+  const login = (provider: 'google' | 'github') => {
+    window.location.href = `${API_BASE}/api/auth/oauth/${provider}/start`;
   };
 
   const register = async (name: string, email: string, password: string): Promise<AuthActionResult> => {

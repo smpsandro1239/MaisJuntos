@@ -224,7 +224,10 @@ Backend em paridade obrigatória: Worker **e** Express.
   configurado → 503, callback com state inválido → 302 `?oauthError=invalid_state`;
   com credenciais fictícias, `/start` → 302 com `client_id`/`redirect_uri`/`scope`/
   `state` corretos. `npm test` 16/16, `npm run test:auth` **12/12**, `lint` e
-  `build` OK.
+  `build` OK. **DEPLOY (2026-10-17)**: Worker `ea21bb25-a4e1-41bc-998f-70f94ff1b076`
+  + Vercel (`maisjuntos-five.vercel.app`, bundle com `/api/auth/oauth/` e sem o
+  mock). Verificado em produção: `/start` (sem chaves) → **503**, provider
+  inválido → **400**, callback state inválido → 302 `?oauthError=invalid_state`.
 
 ### Revisão externa do F5.7 (2026-10-17)
 - **BLOCO 1 (transação no DELETE /api/auth/account) — OK.** Verificou-se que

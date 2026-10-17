@@ -204,6 +204,12 @@ Backend em paridade obrigatória: Worker **e** Express.
     sem dados → 400 e válido → 201 com `proposedPlace` persistido; formato de
     foto inválido → 400; `confirm_ok` → 201). `npm test` 16/16, `npm run test:auth`
     9/9, lint 0, build OK.
+  - **DEPLOY (2026-10-17)**: Worker `569edb73-edae-4191-b1a6-8725939bc326`
+    (migração 005 aplicada na Turso de produção); frontend Vercel (chunk de
+    entrada com a nova UI, `index-JX8AXfJt.js`). Verificado em produção:
+    reporte com foto → 201 + `hasPhotoProof` + `photoUrl`; `GET
+    /api/reports/:id/photo` → 200 `image/jpeg`; `new_place` inválido → 400 e
+    válido → 201.
 - **F5.5 — PENDENTE.** OAuth real Google/GitHub (bloqueado: precisa de
   client id/secret do utilizador). Implementar código + placeholders e
   documentar.

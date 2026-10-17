@@ -214,6 +214,23 @@ export const migrations: Migration[] = [
       await client.execute('CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(user_id)');
     },
   },
+  {
+    version: '005',
+    name: 'add_report_photos',
+    up: async (client: Client) => {
+      // Comprovativos fotográficos dos reportes da comunidade. Tabela separada
+      // para não inflar a listagem pública de reportes (o binário só é pedido
+      // sob procura via GET /api/reports/:id/photo).
+      await client.execute(`
+        CREATE TABLE IF NOT EXISTS report_photos (
+          reportId TEXT PRIMARY KEY,
+          mime TEXT NOT NULL,
+          data TEXT NOT NULL,
+          createdAt TEXT NOT NULL
+        );
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(client: Client): Promise<void> {

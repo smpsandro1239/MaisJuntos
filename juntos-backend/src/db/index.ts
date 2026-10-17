@@ -313,6 +313,42 @@ export async function insertOrUpdateReportInDb(db: Client, report: CommunityRepo
   });
 }
 
+// Comprovativo fotográfico de um reporte (migration 005). Guardado numa tabela
+// própria para não inflar a listagem pública de reportes.
+export interface ReportPhoto {
+  reportId: string;
+  mime: string;
+  data: string; // base64 (sem o prefixo `data:`)
+  createdAt: string;
+}
+
+export async function insertReportPhoto(db: Client, photo: ReportPhoto): Promise<void> {
+  await db.execute({
+    sql: 'INSERT OR REPLACE INTO report_photos (reportId, mime, data, createdAt) VALUES (?, ?, ?, ?)',
+    args: [
+      photo.reportId,
+      photo.mime,
+      photo.data,
+      photo.createdAt || new Date().toISOString(),
+    ],
+  });
+}
+
+export async function getReportPhoto(db: Client, reportId: string): Promise<ReportPhoto | null> {
+  const rs = await db.execute({
+    sql: 'SELECT reportId, mime, data, createdAt FROM report_photos WHERE reportId = ?',
+    args: [reportId],
+  });
+  if (!rs.rows.length) return null;
+  const row = rs.rows[0] as Record<string, unknown>;
+  return {
+    reportId: String(row.reportId),
+    mime: String(row.mime),
+    data: String(row.data),
+    createdAt: String(row.createdAt || ''),
+  };
+}
+
 export async function getAppState<T>(db: Client, key: string, defaultValue: T): Promise<T> {
   try {
     const rs = await db.execute({

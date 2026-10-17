@@ -16,6 +16,9 @@ Plataforma para famílias descobrirem e partilharem atividades infantis e famili
 - Favoritos e Plano Família persistidos na base de dados (sincronizados por conta).
 - Meteorologia por cidade (com cache de 15 min) para decidir atividades indoor/outdoor.
 - Cálculo de proximidade (Haversine) e ligação «Como Chegar».
+- Contribuição da comunidade: reportar alterações (preço, horário, fraldário,
+  acessibilidade, estacionamento), **propor espaços novos** com localização e
+  **anexar comprovativo fotográfico** (comprimido no cliente).
 
 **Backoffice de curadoria (admin)**
 - Painel de métricas, curadoria de POIs, denúncias da comunidade, editor de POI.

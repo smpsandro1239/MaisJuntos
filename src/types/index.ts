@@ -88,13 +88,39 @@ export interface POI {
   updatedAt: string;
 }
 
+export type ReportIssueType =
+  | 'price_changed'
+  | 'nursery_closed'
+  | 'schedule_wrong'
+  | 'temporary_closure'
+  | 'accessibility'
+  | 'parking'
+  | 'confirm_ok'
+  | 'new_place';
+
+// Proposta de novo espaço submetida pela comunidade (issueType === 'new_place').
+export interface ProposedPlace {
+  name: string;
+  category: string;
+  address: string;
+  city: string;
+  latitude: number;
+  longitude: number;
+  minAge?: number;
+  maxAge?: number;
+  isFree?: boolean;
+  priceFamily?: number;
+  hasNursery?: boolean;
+  scheduleNote?: string;
+}
+
 export interface CommunityReport {
   id: string;
   code: string; // e.g. #REP-4091
   poiId: string;
   poiName: string;
   poiAddress: string;
-  issueType: 'price_changed' | 'nursery_closed' | 'schedule_wrong' | 'temporary_closure';
+  issueType: ReportIssueType;
   issueLabel: string;
   severity: 'critical' | 'warning' | 'info';
   status: 'open' | 'in_review' | 'resolved' | 'dismissed';
@@ -112,6 +138,7 @@ export interface CommunityReport {
   poiPhone: string;
   gpsDistanceProofMeters: number;
   checklist: Array<{ id: string; label: string; checked: boolean }>;
+  proposedPlace?: ProposedPlace;
   createdAt: string;
 }
 

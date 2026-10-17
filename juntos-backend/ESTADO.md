@@ -180,9 +180,51 @@ Backend em paridade obrigatória: Worker **e** Express.
     reenvio sem sessão 401, `pois` 200; bundle contém a UI de verificação e
     recuperação. Nota: sem `RESEND_API_KEY` no Worker, os emails de produção
     ficam nos logs (`wrangler tail`) em vez de serem enviados.
+- **F5.8 — OK (Contribuir: novo espaço + foto + checklist).** Feedback do
+  utilizador: o CTA «Viste um parque novo?» só permitia escolher entre POIs
+  existentes e não havia prova fotográfica. Corrigido em Worker **e** Express:
+  - Migração **005** `add_report_photos` (tabela `report_photos`: `reportId` PK,
+    `mime`, `data` base64, `createdAt`) — fora do JSON do reporte para não inflar
+    a listagem pública de reportes.
+  - `POST /api/reports`: aceita `photo` (data URL `image/jpeg|png|webp`, máx
+    ~1,6 MB em base64), guarda o binário em `report_photos`, devolve
+    `hasPhotoProof` e `photoUrl`; o campo `photo` **não** fica no JSON do reporte.
+  - `GET /api/reports/:id/photo`: serve o comprovativo (Content-Type + cache 24 h).
+  - `new_place`: reporte sem `poiId`, com `proposedPlace` (nome, categoria,
+    morada, cidade, coordenadas, idades, gratuito/preço, fraldário, horário).
+    Validação zod condicional (exige POI nos reportes normais e `proposedPlace`
+    no `new_place`).
+  - Tipos extra: `accessibility`, `parking`, `confirm_ok` (confirmação positiva).
+  - Frontend: `ReportModal` reescrito (modo «Reportar alteração»/«Novo espaço»,
+    upload com compressão no cliente em `src/services/imageUtils.ts`, checklist
+    real em vez de valores fabricados), `ReportsScreen` (admin) mostra a
+    miniatura do comprovativo.
+  - **Testes**: fluxo funcional 14/14 no Express (reporte normal; foto → 201 +
+    `photoUrl` + `GET` do binário com Content-Type/bytes corretos; `new_place`
+    sem dados → 400 e válido → 201 com `proposedPlace` persistido; formato de
+    foto inválido → 400; `confirm_ok` → 201). `npm test` 16/16, `npm run test:auth`
+    9/9, lint 0, build OK.
 - **F5.5 — PENDENTE.** OAuth real Google/GitHub (bloqueado: precisa de
   client id/secret do utilizador). Implementar código + placeholders e
   documentar.
+
+### Revisão externa do F5.7 (2026-10-17)
+- **BLOCO 1 (transação no DELETE /api/auth/account) — OK.** Verificou-se que
+  **nunca existiu** `BEGIN/COMMIT/ROLLBACK` no histórico do `server.ts`
+  (`git log -S ROLLBACK -- server.ts` vazio), pelo que a «regressão do Ciclo 4»
+  descrita na revisão não corresponde ao repositório. Ainda assim, a preocupação
+  era válida: a eliminação não era atómica. Corrigido em Worker e Express para
+  uma **única transação** via `batch()` do libSQL (o `BEGIN/COMMIT` separado não
+  é transacional sobre o protocolo HTTP remoto da Turso). Atomicidade provada
+  empiricamente numa tabela de rascunho (batch com falha a meio → *rollback*,
+  0 linhas). Commit `95ba23e`.
+- **BLOCO 2 (emails em produção) — PENDENTE.** Falta configurar
+  `RESEND_API_KEY` + `EMAIL_FROM` no Worker (e Vercel); sem isso os emails de
+  produção ficam nos logs. Requer conta Resend do utilizador.
+- **BLOCO 3 (utilizadores pré-existentes `email_verified`) — PENDENTE.**
+  Migração para marcar os 3 utilizadores de sistema + seeds verificados.
+- **BLOCO 4 (soft vs hard verification) — aguarda decisão do utilizador.**
+- **BLOCO 5 (cleanup de testes / hook dev-only) — PENDENTE.**
 
 ### Correções de paridade do Express (2026-10-16)
 - CORS: origem não permitida respondia **500** (callback com `new Error`);

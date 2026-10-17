@@ -23,7 +23,7 @@ interface RealtimeContextType {
   updatePoi: (poi: POI) => Promise<void>;
   createPoi: (poi: Partial<POI>) => Promise<void>;
   deletePoi: (poiId: string) => Promise<void>;
-  submitReport: (report: Partial<CommunityReport>) => Promise<void>;
+  submitReport: (report: Partial<CommunityReport> & { photo?: string }) => Promise<void>;
   resolveReport: (reportId: string, applyToPoi?: boolean) => Promise<void>;
   togglePlanB: () => Promise<void>;
   changeCity: (city: string) => Promise<void>;
@@ -193,7 +193,7 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
-  const submitReport = async (reportData: Partial<CommunityReport>) => {
+  const submitReport = async (reportData: Partial<CommunityReport> & { photo?: string }) => {
     try {
       const res = await fetch(`${API_BASE}/api/reports`, { credentials: 'include',
         method: 'POST',

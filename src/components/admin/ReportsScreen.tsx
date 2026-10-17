@@ -318,7 +318,17 @@ export const ReportsScreen: React.FC = () => {
                       <span className="font-bold text-secondary">{report.newValue}</span>
                     </div>
                     {report.hasPhotoProof && (
-                      <span className="text-[11px] text-outline italic">Comprovativo com foto</span>
+                      <div className="flex items-center gap-2">
+                        {report.photoUrl && (
+                          <img
+                            src={report.photoUrl}
+                            alt="Comprovativo fotográfico"
+                            loading="lazy"
+                            className="w-10 h-10 rounded-lg object-cover border border-surface-container-high shrink-0"
+                          />
+                        )}
+                        <span className="text-[11px] text-outline italic">Comprovativo com foto</span>
+                      </div>
                     )}
                   </div>
 

@@ -134,6 +134,18 @@ routes.post('/login', rateLimit('AUTH_RATE_LIMITER'), async (c) => {
   }
 
   await resetFailedLogins(db, dbUser.id);
+
+  // Verificação de email (hard, opcional): só após validar a palavra-passe.
+  if (c.env.REQUIRE_EMAIL_VERIFICATION === 'true' && !dbUser.email_verified) {
+    return c.json(
+      {
+        error: 'Confirme o seu email antes de iniciar sessão. Enviámos-lhe uma ligação de confirmação.',
+        code: 'EMAIL_NOT_VERIFIED',
+      },
+      403
+    );
+  }
+
   const sessionId = await createSession(db, dbUser.id, c.req.header('User-Agent'), clientIp(c));
   setSessionCookie(c, sessionId);
 

@@ -237,7 +237,16 @@ Backend em paridade obrigatória: Worker **e** Express.
   no Worker de produção (`login` do admin → `emailVerified: true`). Deploy
   Worker `874f6e65-c98b-4b95-b49c-4d309d810c8e` (a 006 aplicou na Turso de
   produção).
-- **BLOCO 4 (soft vs hard verification) — aguarda decisão do utilizador.**
+- **BLOCO 4 (soft vs hard verification) — OK (configurável, default suave).**
+  Decisão: manter o comportamento **suave** por omissão (login permitido; banner
+  incentiva a confirmação), porque a entrega de emails em produção (Resend) ainda
+  não está ativa — o modo duro bloquearia utilizadores reais. Adicionada a flag
+  `REQUIRE_EMAIL_VERIFICATION` (default `false`): a `true`, o login passa a
+  devolver **403** com `code: EMAIL_NOT_VERIFIED` para contas não confirmadas
+  (a verificação acontece **depois** de validar a palavra-passe, para não revelar
+  existência de conta). Implementado em Express e no Worker; documentado no
+  `.env.example`. Verificado: em modo duro, conta não confirmada → 403, admin
+  confirmado → 200; em modo suave, `npm test` 16/16 e `npm run test:auth` 9/9.
 - **BLOCO 5 (limpeza de testes / hook dev-only) — OK.** `tests/auth-flow.test.ts`
   passa a limpar as contas efémeras que cria, através de um hook
   **estritamente dev-only**: `POST /api/dev/cleanup-test-data` (Express) só

@@ -63,6 +63,10 @@ declare global {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const isProd = process.env.NODE_ENV === 'production';
+// Política de verificação de email (revisão F5.7, BLOCO 4): por omissão é
+// SUAVE (login permitido, banner incentiva a confirmação). Definir a `true`
+// passa a exigir email confirmado para iniciar sessão (hard).
+const REQUIRE_EMAIL_VERIFICATION = process.env.REQUIRE_EMAIL_VERIFICATION === 'true';
 const PORT = Number(process.env.PORT) || 3000;
 
 const COOKIE_NAME = 'juntos_session';
@@ -510,6 +514,16 @@ app.post('/api/auth/login', authLimiter, async (req, res, next) => {
     }
 
     await resetFailedLogins(client, dbUser.id);
+
+    // Verificação de email (hard): só bloqueia depois de validar a palavra-passe,
+    // para não revelar a existência da conta a terceiros.
+    if (REQUIRE_EMAIL_VERIFICATION && !dbUser.email_verified) {
+      return res.status(403).json({
+        error: 'Confirme o seu email antes de iniciar sessão. Enviámos-lhe uma ligação de confirmação.',
+        code: 'EMAIL_NOT_VERIFIED',
+      });
+    }
+
     const userAgent = req.headers['user-agent'];
     const ip = req.ip || req.socket.remoteAddress;
     const sessionId = await createSession(client, dbUser.id, userAgent, ip);

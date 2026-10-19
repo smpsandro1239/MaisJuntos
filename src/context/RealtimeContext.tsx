@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef, useCallb
 import { POI, CommunityReport, OperationalMetrics, FamilyPlan, WsMessage } from '../types';
 import { INITIAL_POIS, INITIAL_REPORTS, INITIAL_METRICS, INITIAL_FAMILY_PLAN } from '../data/mockData';
 import { API_BASE, WS_URL } from '../config';
+import { useAuth } from './AuthContext';
 
 interface ToastNotification {
   id: string;
@@ -23,7 +24,9 @@ interface RealtimeContextType {
   updatePoi: (poi: POI) => Promise<void>;
   createPoi: (poi: Partial<POI>) => Promise<void>;
   deletePoi: (poiId: string) => Promise<void>;
-  submitReport: (report: Partial<CommunityReport> & { photo?: string }) => Promise<void>;
+  submitReport: (
+    report: Partial<CommunityReport> & { photo?: string; photoProofUrl?: string }
+  ) => Promise<{ ok: boolean; error?: string }>;
   resolveReport: (reportId: string, applyToPoi?: boolean) => Promise<void>;
   togglePlanB: () => Promise<void>;
   changeCity: (city: string) => Promise<void>;
@@ -32,6 +35,7 @@ interface RealtimeContextType {
 const RealtimeContext = createContext<RealtimeContextType | undefined>(undefined);
 
 export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isLoggedIn } = useAuth();
   const [pois, setPois] = useState<POI[]>(INITIAL_POIS);
   const [reports, setReports] = useState<CommunityReport[]>(INITIAL_REPORTS);
   const [metrics, setMetrics] = useState<OperationalMetrics>(INITIAL_METRICS);
@@ -56,12 +60,40 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   useEffect(() => {
-    const wsUrl = WS_URL;
-
-    let socket: WebSocket;
+    let socket: WebSocket | undefined;
     let reconnectTimer: NodeJS.Timeout;
+    let stopped = false;
 
-    function connect() {
+    async function connect() {
+      if (stopped) return;
+      // Sem sessão não há handshake possível (o Durable Object exige bilhete ou
+      // cookie). Não abrir socket evita um ciclo de reconexões a receber 401.
+      if (!isLoggedIn) {
+        setIsWsConnected(false);
+        return;
+      }
+      // Autenticação do WebSocket: em produção o cookie de sessão vive no
+      // domínio Vercel e o browser não o envia ao Worker (cross-site). Obtém-se
+      // então um bilhete efémero same-origin (o cookie segue via rewrite) e
+      // apresenta-se em `?ticket=`. Se o bilhete falhar, tenta-se o caminho
+      // antigo por cookie (dev local / mesmo domínio).
+      let wsUrl = WS_URL;
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/ws-ticket`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { ticket?: string };
+          if (data?.ticket) {
+            wsUrl += `${wsUrl.includes('?') ? '&' : '?'}ticket=${encodeURIComponent(data.ticket)}`;
+          }
+        }
+      } catch {
+        // Sem bilhete → segue com cookie
+      }
+      if (stopped) return;
+
       try {
         socket = new WebSocket(wsUrl);
         wsRef.current = socket;
@@ -112,24 +144,25 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
         socket.onclose = () => {
           setIsWsConnected(false);
-          reconnectTimer = setTimeout(connect, 3000);
+          if (!stopped) reconnectTimer = setTimeout(connect, 3000);
         };
 
         socket.onerror = () => {
-          socket.close();
+          socket?.close();
         };
       } catch {
-        reconnectTimer = setTimeout(connect, 4000);
+        if (!stopped) reconnectTimer = setTimeout(connect, 4000);
       }
     }
 
     connect();
 
     return () => {
+      stopped = true;
       clearTimeout(reconnectTimer);
       if (socket) socket.close();
     };
-  }, [addToast]);
+  }, [addToast, isLoggedIn]);
 
   const verifyPoi = async (poiId: string) => {
     // Send via WebSocket for instant server-authoritative broadcast
@@ -193,9 +226,12 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
-  const submitReport = async (reportData: Partial<CommunityReport> & { photo?: string }) => {
+  const submitReport = async (
+    reportData: Partial<CommunityReport> & { photo?: string; photoProofUrl?: string }
+  ): Promise<{ ok: boolean; error?: string }> => {
     try {
-      const res = await fetch(`${API_BASE}/api/reports`, { credentials: 'include',
+      const res = await fetch(`${API_BASE}/api/reports`, {
+        credentials: 'include',
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(reportData),
@@ -204,9 +240,20 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const created = (await res.json()) as CommunityReport;
         setReports((prev) => [created, ...prev]);
         addToast('Obrigado!', 'O teu alerta foi enviado à equipa curatorial.');
+        return { ok: true };
       }
+      // Devolve a mensagem do servidor (400 validação, 413 foto grande, 500…)
+      // para o modal a poder mostrar em vez de fechar silenciosamente.
+      let message = 'Não foi possível enviar a contribuição. Tente novamente.';
+      try {
+        const body = (await res.json()) as { error?: string };
+        if (body?.error) message = body.error;
+      } catch {
+        // resposta sem corpo JSON
+      }
+      return { ok: false, error: message };
     } catch {
-      // Ignored
+      return { ok: false, error: 'Falha de rede. Verifica a ligação e tenta novamente.' };
     }
   };
 

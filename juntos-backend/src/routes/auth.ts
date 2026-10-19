@@ -29,6 +29,7 @@ import {
   verifyAndMaybeMigrate,
 } from '../db/auth';
 import { buildPasswordResetEmail, buildVerificationEmail, sendEmail } from '../services/email';
+import { signWsTicket } from '../wsTicket';
 import type { User } from '../types';
 
 const MAX_FAILED_ATTEMPTS = 5;
@@ -163,6 +164,21 @@ routes.post('/login', rateLimit('AUTH_RATE_LIMITER'), async (c) => {
   return c.json({ success: true, user: safeUser, token: sessionId });
 });
 
+// POST /api/auth/ws-ticket — bilhete efémero para o handshake do WebSocket.
+// Necessário porque o cookie de sessão (definido no domínio Vercel) não é
+// enviado no pedido cross-site para o Worker. Mesmo-origem via rewrite da
+// Vercel ⇒ o cookie de sessão segue; o bilhete é apresentado em `?ticket=`.
+routes.post('/ws-ticket', rateLimit('WS_TICKET_RATE_LIMITER'), requireAuth, async (c) => {
+  const user = c.get('user');
+  const sessionId = c.get('sessionId');
+  if (!c.env.SESSION_SECRET) {
+    return c.json({ error: 'Configuração de sessão ausente.' }, 500);
+  }
+  const ticket = await signWsTicket(c.env.SESSION_SECRET, sessionId, user.id);
+  c.header('Cache-Control', 'no-store');
+  return c.json({ ticket, expiresIn: 120 });
+});
+
 // POST /api/auth/logout
 routes.post('/logout', async (c) => {
   const sessionId = getCookie(c, COOKIE_NAME);
@@ -200,7 +216,7 @@ routes.post('/verify-email', async (c) => {
 });
 
 // POST /api/auth/resend-verification — reenvia o email de confirmação (autenticado).
-routes.post('/resend-verification', requireAuth, async (c) => {
+routes.post('/resend-verification', rateLimit('AUTH_RATE_LIMITER'), requireAuth, async (c) => {
   const user = c.get('user') as User;
   if (user.emailVerified) {
     return c.json({ success: true, message: 'O email já está confirmado.' });

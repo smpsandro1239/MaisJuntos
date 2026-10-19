@@ -142,6 +142,40 @@ async function runAuthFlowSuite() {
     assert('6. Reenvio exige sessão iniciada', false, err.message);
   }
 
+  // 6b. ws-ticket: exige sessão e devolve bilhete assinado a quem a tem
+  try {
+    const semSessao = await fetch(`${BASE_URL}/api/auth/ws-ticket`, { method: 'POST' });
+    assert('6b. Bilhete WS exige sessão iniciada', semSessao.status === 401, `status ${semSessao.status}`);
+
+    const wsEmail = `ws.${stamp}@maisjuntos.pt`;
+    await fetch(`${BASE_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: wsEmail, password: strongPw, name: 'WS Ticket' }),
+    });
+    const login = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: wsEmail, password: strongPw }),
+    });
+    const cookie = login.headers
+      .getSetCookie()
+      .map((c) => c.split(';')[0])
+      .join('; ');
+    const comSessao = await fetch(`${BASE_URL}/api/auth/ws-ticket`, {
+      method: 'POST',
+      headers: { Cookie: cookie },
+    });
+    const corpo = await jsonOf(comSessao);
+    assert(
+      '6c. Bilhete WS devolvido a sessão válida',
+      comSessao.status === 200 && typeof corpo.ticket === 'string' && corpo.ticket.length > 0,
+      `status ${comSessao.status}, ticket ${typeof corpo.ticket}`
+    );
+  } catch (err: any) {
+    assert('6b. Bilhete WS exige sessão iniciada', false, err.message);
+  }
+
   // 7. Força bruta: 5 falhas consecutivas bloqueiam a conta (423)
   try {
     const bfEmail = `forcabruta.${stamp}@maisjuntos.pt`;
@@ -214,6 +248,124 @@ async function runAuthFlowSuite() {
     );
   } catch (err: any) {
     assert('8c. Callback com state inválido rejeitado', false, err.message);
+  }
+
+  // 9. Propor espaço (new_place) — sem GPS, com link de localização, link de
+  // foto e todos os novos campos dos filtros.
+  const basePlace = {
+    name: `Espaço Teste ${stamp}`,
+    category: 'parque',
+    address: 'Rua de Teste 1',
+    city: 'Braga',
+  };
+
+  // 9a. Sem coordenadas → 201 (garante que a submissão deixou de exigir GPS)
+  try {
+    const res = await fetch(`${BASE_URL}/api/reports`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        issueType: 'new_place',
+        issueLabel: 'Proposta de novo espaço',
+        reporterName: '[teste] Fluxo',
+        comment: 'Proposta sem coordenadas.',
+        proposedPlace: basePlace,
+      }),
+    });
+    const data = await jsonOf(res);
+    assert(
+      '9a. Propor espaço sem coordenadas → 201',
+      res.status === 201 && data.proposedPlace?.name === basePlace.name && data.proposedPlace?.latitude === undefined,
+      `status ${res.status}, lat ${data.proposedPlace?.latitude}`
+    );
+  } catch (err: any) {
+    assert('9a. Propor espaço sem coordenadas → 201', false, err.message);
+  }
+
+  // 9b. Com locationLink → 201 e campo persistido
+  try {
+    const locationLink = 'https://www.openstreetmap.org/#map=15/41.5518/-8.4229';
+    const res = await fetch(`${BASE_URL}/api/reports`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        issueType: 'new_place',
+        issueLabel: 'Proposta de novo espaço',
+        reporterName: '[teste] Fluxo',
+        comment: 'Proposta com link de mapa.',
+        proposedPlace: { ...basePlace, locationLink },
+      }),
+    });
+    const data = await jsonOf(res);
+    assert(
+      '9b. locationLink persistido',
+      res.status === 201 && data.proposedPlace?.locationLink === locationLink,
+      `status ${res.status}, link ${data.proposedPlace?.locationLink}`
+    );
+  } catch (err: any) {
+    assert('9b. locationLink persistido', false, err.message);
+  }
+
+  // 9c. Com photoProofUrl → 201 e photoUrl igual ao link
+  try {
+    const proof = 'https://exemplo.pt/foto-do-local.jpg';
+    const res = await fetch(`${BASE_URL}/api/reports`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        issueType: 'new_place',
+        issueLabel: 'Proposta de novo espaço',
+        reporterName: '[teste] Fluxo',
+        comment: 'Proposta com foto por link.',
+        photoProofUrl: proof,
+        proposedPlace: basePlace,
+      }),
+    });
+    const data = await jsonOf(res);
+    assert(
+      '9c. photoProofUrl guardado em photoUrl',
+      res.status === 201 && data.photoUrl === proof && data.hasPhotoProof === true,
+      `status ${res.status}, photoUrl ${data.photoUrl}, hasPhotoProof ${data.hasPhotoProof}`
+    );
+  } catch (err: any) {
+    assert('9c. photoProofUrl persistido', false, err.message);
+  }
+
+  // 9d. Todos os novos campos → 201 e todos presentes no reporte devolvido
+  try {
+    const res = await fetch(`${BASE_URL}/api/reports`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        issueType: 'new_place',
+        issueLabel: 'Proposta de novo espaço',
+        reporterName: '[teste] Fluxo',
+        comment: 'Proposta com todos os campos.',
+        proposedPlace: {
+          ...basePlace,
+          latitude: 41.5518,
+          longitude: -8.4229,
+          spaceType: 'interior',
+          hasStrollerAccess: true,
+          hasParking: false,
+          isOpenNow: true,
+        },
+      }),
+    });
+    const data = await jsonOf(res);
+    const p = data.proposedPlace || {};
+    assert(
+      '9d. Campos dos filtros persistidos',
+      res.status === 201 &&
+        p.spaceType === 'interior' &&
+        p.hasStrollerAccess === true &&
+        p.hasParking === false &&
+        p.isOpenNow === true &&
+        p.latitude === 41.5518,
+      `status ${res.status}, ${JSON.stringify(p)}`
+    );
+  } catch (err: any) {
+    assert('9d. Campos dos filtros persistidos', false, err.message);
   }
 
   const fails = results.filter((r) => !r.passed);

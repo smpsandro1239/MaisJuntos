@@ -36,13 +36,20 @@ const proposedPlaceSchema = z.object({
   category: z.string().min(1),
   address: z.string().min(1),
   city: z.string().min(1),
-  latitude: z.number().min(-90).max(90),
-  longitude: z.number().min(-180).max(180),
+  // Coordenadas opcionais: aceita-se apenas uma ligação de mapa colada
+  // (locationLink) ou a morada; a geolocalização resolve-se na curadoria.
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  locationLink: z.string().max(2048).optional(),
   minAge: z.number().optional(),
   maxAge: z.number().optional(),
   isFree: z.boolean().optional(),
   priceFamily: z.number().optional(),
+  spaceType: z.enum(['interior', 'exterior', 'mixed']).optional(),
   hasNursery: z.boolean().optional(),
+  hasStrollerAccess: z.boolean().optional(),
+  hasParking: z.boolean().optional(),
+  isOpenNow: z.boolean().optional(),
   scheduleNote: z.string().optional(),
 });
 
@@ -57,6 +64,12 @@ const reportCreateSchema = z
       .string()
       .regex(/^data:image\/(jpeg|png|webp);base64,/, 'Formato de imagem não suportado')
       .max(MAX_PHOTO_BYTES, 'Comprovativo fotográfico demasiado grande')
+      .optional(),
+    // Alternativa ao upload: ligação para uma imagem já alojada.
+    photoProofUrl: z
+      .string()
+      .max(2048)
+      .regex(/^https?:\/\//i, 'A ligação da imagem deve começar por http:// ou https://')
       .optional(),
     proposedPlace: proposedPlaceSchema.optional(),
   })
@@ -97,6 +110,8 @@ routes.post('/', rateLimit('API_RATE_LIMITER'), async (c) => {
   const body = raw || {};
   const photoDataUrl = typeof body.photo === 'string' ? body.photo : undefined;
   delete body.photo; // o binário vive em `report_photos`, não no JSON do reporte
+  const photoProofUrl = typeof body.photoProofUrl === 'string' ? body.photoProofUrl : undefined;
+  delete body.photoProofUrl; // passa a viver em `photoUrl`
 
   const db = getDb(c.env);
   const newReport = {
@@ -106,11 +121,13 @@ routes.post('/', rateLimit('API_RATE_LIMITER'), async (c) => {
     status: 'open',
     reportedAgo: 'Agora mesmo',
     createdAt: new Date().toISOString(),
-    hasPhotoProof: Boolean(photoDataUrl),
+    hasPhotoProof: Boolean(photoDataUrl || photoProofUrl),
   } as CommunityReport;
 
   if (photoDataUrl) {
     newReport.photoUrl = `/api/reports/${newReport.id}/photo`;
+  } else if (photoProofUrl) {
+    newReport.photoUrl = photoProofUrl;
   }
 
   await insertOrUpdateReportInDb(db, newReport);

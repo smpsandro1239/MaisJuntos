@@ -7,6 +7,7 @@
 // - Broadcast via RPC (método público), nunca endpoint HTTP
 import type { Env } from './env';
 import { isAllowedOrigin, isProd, COOKIE_NAME } from './security';
+import { verifyWsTicket } from './wsTicket';
 import { getSessionWithUser } from './db/auth';
 import {
   getAllPoisFromDb,
@@ -79,9 +80,24 @@ export class RealtimeDO {
       });
     }
 
-    // B. Autenticação por cookie de sessão ANTES de aceitar o WebSocket
-    const cookies = parseCookieHeader(request.headers.get('Cookie'));
-    const sessionId = cookies[COOKIE_NAME];
+    // B. Autenticação ANTES de aceitar o WebSocket.
+    //  1) Bilhete efémero `?ticket=` — necessário em produção, onde o cookie de
+    //     sessão vive no domínio Vercel e o browser não o envia ao Worker.
+    //  2) Cookie de sessão — fallback (dev local / mesmo domínio).
+    let sessionId: string | undefined;
+    let ticketUserId: string | undefined;
+    const ticket = new URL(request.url).searchParams.get('ticket');
+    if (ticket && this.env.SESSION_SECRET) {
+      const ticketData = await verifyWsTicket(this.env.SESSION_SECRET, ticket);
+      if (ticketData) {
+        sessionId = ticketData.sessionId;
+        ticketUserId = ticketData.userId;
+      }
+    }
+    if (!sessionId) {
+      const cookies = parseCookieHeader(request.headers.get('Cookie'));
+      sessionId = cookies[COOKIE_NAME];
+    }
     if (!sessionId) {
       return new Response(JSON.stringify({ error: 'Sessão não iniciada: autenticação obrigatória.' }), {
         status: 401,
@@ -95,6 +111,12 @@ export class RealtimeDO {
       return new Response(JSON.stringify({ error: 'Sessão não iniciada: autenticação obrigatória.' }), {
         status: 401,
       });
+    }
+
+    // Defesa em profundidade: o bilhete é emitido para um utilizador concreto;
+    // se a sessão da BD já não pertencer a esse utilizador, recusa-se.
+    if (ticketUserId && sessionData.user.id !== ticketUserId) {
+      return new Response(JSON.stringify({ error: 'Bilhete de sessão inválido.' }), { status: 401 });
     }
 
     const pair = new WebSocketPair();

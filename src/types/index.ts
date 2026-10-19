@@ -104,13 +104,19 @@ export interface ProposedPlace {
   category: string;
   address: string;
   city: string;
-  latitude: number;
-  longitude: number;
+  latitude?: number;
+  longitude?: number;
+  /** Ligação de mapa colada pelo utilizador (Google Maps/OpenStreetMap). */
+  locationLink?: string;
   minAge?: number;
   maxAge?: number;
   isFree?: boolean;
   priceFamily?: number;
+  spaceType?: 'interior' | 'exterior' | 'mixed';
   hasNursery?: boolean;
+  hasStrollerAccess?: boolean;
+  hasParking?: boolean;
+  isOpenNow?: boolean;
   scheduleNote?: string;
 }
 

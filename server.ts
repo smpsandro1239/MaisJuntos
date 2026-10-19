@@ -73,6 +73,10 @@ const isProd = process.env.NODE_ENV === 'production';
 const REQUIRE_EMAIL_VERIFICATION = process.env.REQUIRE_EMAIL_VERIFICATION === 'true';
 const PORT = Number(process.env.PORT) || 3000;
 
+// Segredo de assinatura dos bilhetes do WebSocket. Tem de ser o mesmo usado na
+// assinatura dos cookies (cookieParser), para haver uma única fonte de verdade.
+const SESSION_SECRET = process.env.SESSION_SECRET || 'chave-secreta-padrao-segura';
+
 const COOKIE_NAME = 'juntos_session';
 const COOKIE_OPTIONS: express.CookieOptions = {
   httpOnly: true,
@@ -130,7 +134,7 @@ app.use(
 
 // 3. Parsers de Corpo e Cookies
 app.use(express.json({ limit: '1mb' }));
-app.use(cookieParser(process.env.SESSION_SECRET || 'chave-secreta-padrao-segura'));
+app.use(cookieParser(SESSION_SECRET));
 
 // 4. Rate Limiting por tipo de recurso
 const authLimiter = rateLimit({
@@ -153,6 +157,16 @@ const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 1000,
   message: { error: 'Limite global de pedidos excedido. Aguarde alguns instantes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Bilhetes de WS são pedidos baratos e frequentes (reconexões normais), pelo que
+// têm um orçamento próprio alinhado com o Worker (WS_TICKET_RATE_LIMITER).
+const wsTicketLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: { error: 'Demasiados pedidos de bilhete de ligação em tempo real.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -230,13 +244,21 @@ const reportProposedPlaceSchema = z.object({
   category: z.string().min(1),
   address: z.string().min(1),
   city: z.string().min(1),
-  latitude: z.number().min(-90).max(90),
-  longitude: z.number().min(-180).max(180),
+  // Coordenadas são opcionais: o utilizador pode indicar apenas uma ligação de
+  // mapa colada (locationLink) ou a morada; a geolocalização é resolvida mais
+  // tarde pela curadoria. Antes eram obrigatórias e bloqueavam a submissão.
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  locationLink: z.string().max(2048).optional(),
   minAge: z.number().optional(),
   maxAge: z.number().optional(),
   isFree: z.boolean().optional(),
   priceFamily: z.number().optional(),
+  spaceType: z.enum(['interior', 'exterior', 'mixed']).optional(),
   hasNursery: z.boolean().optional(),
+  hasStrollerAccess: z.boolean().optional(),
+  hasParking: z.boolean().optional(),
+  isOpenNow: z.boolean().optional(),
   scheduleNote: z.string().optional(),
 });
 
@@ -251,6 +273,12 @@ const reportCreateSchema = z
       .string()
       .regex(/^data:image\/(jpeg|png|webp);base64,/, 'Formato de imagem não suportado')
       .max(MAX_PHOTO_BYTES, 'Comprovativo fotográfico demasiado grande')
+      .optional(),
+    // Alternativa ao upload: ligação para uma imagem já alojada.
+    photoProofUrl: z
+      .string()
+      .max(2048)
+      .regex(/^https?:\/\//i, 'A ligação da imagem deve começar por http:// ou https://')
       .optional(),
     proposedPlace: reportProposedPlaceSchema.optional(),
   })
@@ -270,6 +298,42 @@ const reportCreateSchema = z
 function decodeReportPhoto(dataUrl: string): { mime: string; base64: string } | null {
   const m = dataUrl.match(/^data:([^;]+);base64,([\s\S]+)$/);
   return m ? { mime: m[1], base64: m[2] } : null;
+}
+
+// Bilhetes efémeros do WebSocket (paridade com juntos-backend/src/wsTicket.ts).
+// Assinados com HMAC-SHA256 sobre SESSION_SECRET, TTL de 2 minutos.
+const WS_TICKET_TTL_SECONDS = 120;
+
+function toBase64Url(buf: Buffer): string {
+  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function signWsTicket(secret: string, sessionId: string, userId: string): string {
+  const payload = {
+    sid: sessionId,
+    uid: userId,
+    exp: Math.floor(Date.now() / 1000) + WS_TICKET_TTL_SECONDS,
+  };
+  const body = toBase64Url(Buffer.from(JSON.stringify(payload)));
+  const signature = crypto.createHmac('sha256', secret).update(body).digest();
+  return `${body}.${toBase64Url(signature)}`;
+}
+
+function verifyWsTicket(secret: string, ticket: string): { sessionId: string; userId: string } | null {
+  const parts = ticket.split('.');
+  if (parts.length !== 2) return null;
+  const [body, signature] = parts;
+  try {
+    const expected = crypto.createHmac('sha256', secret).update(body).digest();
+    const provided = Buffer.from(signature.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+    if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) return null;
+    const payload = JSON.parse(Buffer.from(body.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+    if (!payload?.sid || !payload?.uid || typeof payload.exp !== 'number') return null;
+    if (payload.exp * 1000 <= Date.now()) return null;
+    return { sessionId: payload.sid, userId: payload.uid };
+  } catch {
+    return null;
+  }
 }
 
 // 6. Middlewares de Autenticação e Autorização (RBAC)
@@ -343,9 +407,18 @@ httpServer.on('upgrade', async (request, socket, head) => {
       return;
     }
 
-    // B. Extração e validação da sessão por Cookie
-    const cookies = parseCookiesHeader(request.headers.cookie);
-    const sessionId = cookies[COOKIE_NAME];
+    // B. Autenticação: bilhete efémero `?ticket=` (preferido) ou cookie de sessão.
+    let sessionId: string | undefined;
+    try {
+      const ticket = new URL(request.url || '/', 'http://localhost').searchParams.get('ticket');
+      if (ticket) sessionId = verifyWsTicket(SESSION_SECRET, ticket)?.sessionId;
+    } catch {
+      // URL malformado → segue para o cookie
+    }
+    if (!sessionId) {
+      const cookies = parseCookiesHeader(request.headers.cookie);
+      sessionId = cookies[COOKIE_NAME];
+    }
 
     if (!sessionId) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
@@ -545,10 +618,19 @@ app.post('/api/auth/login', authLimiter, async (req, res, next) => {
       trustScore: dbUser.trust_score,
     };
 
-    return res.json({ success: true, user: safeUser, token: sessionId });
+    return res.json({ success: true, user: safeUser });
   } catch (err) {
     next(err);
   }
+});
+
+// POST /api/auth/ws-ticket — bilhete efémero para o handshake do WebSocket.
+// Mesmo-origem via rewrite da Vercel ⇒ o cookie de sessão segue; o bilhete é
+// depois apresentado em `?ticket=`, evitando depender de cookies cross-site.
+app.post('/api/auth/ws-ticket', wsTicketLimiter, requireAuth, (req, res) => {
+  const ticket = signWsTicket(SESSION_SECRET, req.sessionId as string, (req.user as User).id);
+  res.set('Cache-Control', 'no-store');
+  return res.json({ ticket, expiresIn: WS_TICKET_TTL_SECONDS });
 });
 
 // POST /api/auth/logout
@@ -599,7 +681,7 @@ app.post('/api/auth/verify-email', async (req, res, next) => {
 });
 
 // POST /api/auth/resend-verification — reenvia o email de confirmação (autenticado).
-app.post('/api/auth/resend-verification', requireAuth, async (req, res, next) => {
+app.post('/api/auth/resend-verification', authLimiter, requireAuth, async (req, res, next) => {
   try {
     const user = req.user as User;
     if (user.emailVerified) {
@@ -910,6 +992,9 @@ app.post('/api/dev/cleanup-test-data', async (_req, res, next) => {
       await deletePoiFromDb(t.id);
     }
     pois = pois.filter((p) => !testPois.some((t) => t.id === p.id));
+    // Reportes criados pelas suítes identificam-se com o marcador "[teste]".
+    await client.execute({ sql: "DELETE FROM reports WHERE reporterName LIKE '[teste]%'" });
+    reports = reports.filter((r) => !String(r.reporterName || '').startsWith('[teste]'));
     return res.json({ success: true, usersDeleted, poisDeleted: testPois.length });
   } catch (err) {
     next(err);
@@ -1128,6 +1213,8 @@ app.post('/api/reports', async (req, res, next) => {
     const body = { ...(req.body as Record<string, any>) };
     const photoDataUrl = typeof body.photo === 'string' ? body.photo : undefined;
     delete body.photo; // o binário vive em `report_photos`, não no JSON do reporte
+    const photoProofUrl = typeof body.photoProofUrl === 'string' ? body.photoProofUrl : undefined;
+    delete body.photoProofUrl; // a ligação externa fica em `photoUrl`
 
     const newReport: CommunityReport = {
       ...body,
@@ -1136,11 +1223,15 @@ app.post('/api/reports', async (req, res, next) => {
       status: 'open',
       reportedAgo: 'Agora mesmo',
       createdAt: new Date().toISOString(),
-      hasPhotoProof: Boolean(photoDataUrl),
+      // O comprovativo pode ser um envio binário (upload) OU uma ligação para
+      // uma imagem já alojada (photoProofUrl).
+      hasPhotoProof: Boolean(photoDataUrl || photoProofUrl),
     } as CommunityReport;
 
     if (photoDataUrl) {
       newReport.photoUrl = `/api/reports/${newReport.id}/photo`;
+    } else if (photoProofUrl) {
+      newReport.photoUrl = photoProofUrl;
     }
 
     reports.unshift(newReport);

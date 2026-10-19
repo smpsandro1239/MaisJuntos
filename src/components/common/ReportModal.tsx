@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { POI, ReportIssueType, ProposedPlace } from '../../types';
 import { calculateDistanceKm } from '../../services/weatherGeoService';
 import { compressImageFile } from '../../services/imageUtils';
+import { parseCoordsFromLink } from '../../utils/geoLink';
 
 interface ReportModalProps {
   isOpen: boolean;
@@ -85,10 +86,10 @@ const emptyPlace = (): ProposedPlace => ({
   category: 'parque',
   address: '',
   city: 'Braga',
-  latitude: 0,
-  longitude: 0,
   isFree: true,
   priceFamily: 0,
+  spaceType: 'exterior',
+  isOpenNow: true,
 });
 
 export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, targetPoi }) => {
@@ -102,8 +103,12 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, targe
   const [newValue, setNewValue] = useState('');
   const [place, setPlace] = useState<ProposedPlace>(emptyPlace());
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationLink, setLocationLink] = useState('');
+  const [locationLinkInfo, setLocationLinkInfo] = useState<string | null>(null);
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
+  const [photoUrlInput, setPhotoUrlInput] = useState('');
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [checklist, setChecklist] = useState([
@@ -150,31 +155,52 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, targe
     setChecklist((prev) => prev.map((item) => (item.id === id ? { ...item, checked: !item.checked } : item)));
   };
 
+  // Liga uma ligação de mapa colada: extrai coordenadas, se possível, sem
+  // impedir o envio quando não for possível extraí-las.
+  const handleLocationLink = (value: string) => {
+    setLocationLink(value);
+    const parsed = value.trim() ? parseCoordsFromLink(value) : null;
+    if (parsed) {
+      setCoords(parsed);
+      setLocationLinkInfo(`Coordenadas reconhecidas (${parsed.lat.toFixed(4)}, ${parsed.lng.toFixed(4)}).`);
+    } else if (value.trim()) {
+      setLocationLinkInfo('Não foi possível extrair coordenadas; a ligação segue para a curadoria.');
+    } else {
+      setLocationLinkInfo(null);
+    }
+  };
+
+  const hasPhoto = Boolean(photoDataUrl || photoUrlInput.trim());
+
+  // A localização deixou de ser obrigatória: a morada + (opcionalmente) GPS ou
+  // uma ligação de mapa chegam para propor o espaço. Isto corrige o botão que
+  // ficava inativo e impedia a submissão de "Propor espaço".
   const canSubmit =
     comment.trim().length > 0 &&
     (mode === 'new_place'
       ? place.name.trim() !== '' &&
         place.category !== '' &&
         place.address.trim() !== '' &&
-        place.city.trim() !== '' &&
-        coords !== null
+        place.city.trim() !== ''
       : Boolean(currentPoi));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
     setSubmitting(true);
+    setSubmitError(null);
     try {
       const reporterName = user.name || 'Família da Comunidade';
       const reporterTrust = user.trustScore || 90;
+      let result: { ok: boolean; error?: string } | null = null;
 
       if (mode === 'new_place') {
         const proposedPlace: ProposedPlace = {
           ...place,
-          latitude: coords!.lat,
-          longitude: coords!.lng,
+          ...(coords ? { latitude: coords.lat, longitude: coords.lng } : {}),
+          ...(locationLink.trim() ? { locationLink: locationLink.trim() } : {}),
         };
-        await submitReport({
+        result = await submitReport({
           issueType: 'new_place',
           issueLabel: ISSUE_LABELS.new_place,
           severity: SEVERITY.new_place,
@@ -188,10 +214,14 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, targe
           oldValue: 'Espaço ainda não catalogado',
           newValue: proposedPlace.name,
           gpsDistanceProofMeters: -1,
-          hasPhotoProof: Boolean(photoDataUrl),
+          hasPhotoProof: hasPhoto,
           checklist,
           proposedPlace,
-          ...(photoDataUrl ? { photo: photoDataUrl } : {}),
+          ...(photoDataUrl
+            ? { photo: photoDataUrl }
+            : photoUrlInput.trim()
+            ? { photoProofUrl: photoUrlInput.trim() }
+            : {}),
         });
       } else {
         let gpsDistanceProofMeters = 0;
@@ -222,7 +252,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, targe
           ? `${comment.trim()}\n\n[Validação GPS]: ${proximityValidationNote}`
           : comment.trim();
 
-        await submitReport({
+        result = await submitReport({
           poiId: currentPoi?.id,
           poiName: currentPoi?.name || 'Local em Braga',
           poiAddress: currentPoi?.address || 'Braga',
@@ -242,12 +272,22 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, targe
           newValue: newValue || 'Informação atualizada no local',
           poiPhone: currentPoi?.phone || '+351 253 000 000',
           gpsDistanceProofMeters,
-          hasPhotoProof: Boolean(photoDataUrl),
+          hasPhotoProof: hasPhoto,
           checklist,
-          ...(photoDataUrl ? { photo: photoDataUrl } : {}),
+          ...(photoDataUrl
+            ? { photo: photoDataUrl }
+            : photoUrlInput.trim()
+            ? { photoProofUrl: photoUrlInput.trim() }
+            : {}),
         });
       }
+      if (!result?.ok) {
+        setSubmitError(result?.error || 'Não foi possível enviar a contribuição. Tente novamente.');
+        return; // não fechar o modal em caso de erro
+      }
       onClose();
+    } catch {
+      setSubmitError('Não foi possível enviar a contribuição. Tente novamente.');
     } finally {
       setSubmitting(false);
     }
@@ -419,25 +459,52 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, targe
                 </div>
               </div>
 
-              {/* Coordenadas */}
-              <div>
-                <label className="block font-label-md text-xs text-on-surface mb-1">
-                  Localização no mapa <span className="text-secondary">*</span>
-                </label>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={captureMyLocation}
-                    className="h-10 px-3 rounded-xl bg-surface-container-high hover:bg-surface-container-highest text-on-surface text-xs font-semibold transition-colors flex items-center gap-1.5 shrink-0"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">my_location</span>
-                    Usar a minha localização
-                  </button>
-                  <span className="text-[11px] text-on-surface-variant">
-                    {coords
-                      ? `Coordenadas capturadas (${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)})`
-                      : 'Ainda sem coordenadas'}
-                  </span>
+              {/* Localização: GPS ou ligação colada (opcional) */}
+              <div className="flex flex-col gap-2">
+                <div>
+                  <label className="block font-label-md text-xs text-on-surface mb-1">Localização no mapa</label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={captureMyLocation}
+                      className="h-10 px-3 rounded-xl bg-surface-container-high hover:bg-surface-container-highest text-on-surface text-xs font-semibold transition-colors flex items-center gap-1.5 shrink-0"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">my_location</span>
+                      Usar a minha localização
+                    </button>
+                    {coords && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCoords(null);
+                          setLocationLinkInfo(null);
+                        }}
+                        className="text-[11px] text-on-surface-variant underline"
+                      >
+                        Limpar
+                      </button>
+                    )}
+                    <span className="text-[11px] text-on-surface-variant">
+                      {coords
+                        ? `Coordenadas: ${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}`
+                        : 'Opcional — podes colar uma ligação abaixo'}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <label className="block font-label-md text-xs text-on-surface mb-1">
+                    Ligação do mapa (Google Maps / OpenStreetMap)
+                  </label>
+                  <input
+                    type="text"
+                    value={locationLink}
+                    onChange={(e) => handleLocationLink(e.target.value)}
+                    placeholder="Cola aqui uma ligação (ex: https://maps.google.com/.../@41.55,-8.42,15z)"
+                    className={fieldClass}
+                  />
+                  {locationLinkInfo && (
+                    <p className="text-[11px] text-on-surface-variant mt-1">{locationLinkInfo}</p>
+                  )}
                 </div>
               </div>
 
@@ -498,17 +565,49 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, targe
                 )}
               </div>
 
-              <div className="flex items-center gap-2">
-                <input
-                  id="place-nursery"
-                  type="checkbox"
-                  checked={Boolean(place.hasNursery)}
-                  onChange={(e) => setPlace((p) => ({ ...p, hasNursery: e.target.checked }))}
-                  className="w-4 h-4 rounded accent-primary"
-                />
-                <label htmlFor="place-nursery" className="text-xs text-on-surface">
-                  Tem fraldário / estação de changing
-                </label>
+              {/* Campos alinhados com os filtros familiares */}
+              <div>
+                <label className="block font-label-md text-xs text-on-surface mb-1">Ambiente</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'interior', label: 'Interior ☔' },
+                    { id: 'exterior', label: 'Ar Livre 🌳' },
+                    { id: 'mixed', label: 'Misto' },
+                  ].map((space) => (
+                    <button
+                      key={space.id}
+                      type="button"
+                      onClick={() => setPlace((p) => ({ ...p, spaceType: space.id as 'interior' | 'exterior' | 'mixed' }))}
+                      className={`py-2 rounded-xl border text-xs font-semibold transition-all ${
+                        place.spaceType === space.id
+                          ? 'border-secondary-container bg-secondary-container text-on-secondary font-bold shadow-xs'
+                          : 'border-surface-container-high bg-surface-container-low text-on-surface hover:bg-surface-container'
+                      }`}
+                    >
+                      {space.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                {[
+                  { id: 'place-nursery', key: 'hasNursery', label: 'Tem fraldário / estação de changing' },
+                  { id: 'place-stroller', key: 'hasStrollerAccess', label: 'Acessível a carrinho de bebé' },
+                  { id: 'place-parking', key: 'hasParking', label: 'Estacionamento fácil no local' },
+                  { id: 'place-open', key: 'isOpenNow', label: 'Está aberto agora / aberto hoje' },
+                ].map((item) => (
+                  <label key={item.id} className="flex items-center gap-2 text-xs text-on-surface cursor-pointer select-none">
+                    <input
+                      id={item.id}
+                      type="checkbox"
+                      checked={Boolean(place[item.key as keyof ProposedPlace])}
+                      onChange={(e) => setPlace((p) => ({ ...p, [item.key]: e.target.checked }))}
+                      className="w-4 h-4 rounded accent-primary"
+                    />
+                    {item.label}
+                  </label>
+                ))}
               </div>
 
               <div>
@@ -536,11 +635,13 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, targe
                 <input type="file" accept="image/*" capture="environment" onChange={handleFile} className="hidden" />
               </label>
               <div className="flex items-center gap-2 min-w-0">
-                {photoDataUrl && (
+                {(photoDataUrl || photoUrlInput.trim()) && (
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={photoDataUrl}
+                    src={photoDataUrl || photoUrlInput.trim()}
                     alt="Comprovativo fotográfico"
                     className="w-14 h-14 rounded-xl object-cover border border-surface-container-high shrink-0"
+                    onError={() => setPhotoError('Não foi possível carregar a imagem dessa ligação.')}
                   />
                 )}
                 <div className="min-w-0">
@@ -548,13 +649,21 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, targe
                     <p className="text-[11px] text-error">{photoError}</p>
                   ) : (
                     <p className="text-[11px] text-on-surface-variant">
-                      {photoDataUrl ? 'Foto pronta a enviar.' : 'Mostra o local, o preço ou o fraldário.'}
+                      {photoDataUrl
+                        ? 'Foto pronta a enviar.'
+                        : photoUrlInput.trim()
+                        ? 'Ligação de imagem pronta a enviar.'
+                        : 'Mostra o local, o preço ou o fraldário.'}
                     </p>
                   )}
-                  {photoDataUrl && (
+                  {(photoDataUrl || photoUrlInput.trim()) && (
                     <button
                       type="button"
-                      onClick={() => setPhotoDataUrl(null)}
+                      onClick={() => {
+                        setPhotoDataUrl(null);
+                        setPhotoUrlInput('');
+                        setPhotoError(null);
+                      }}
                       className="text-[11px] text-on-surface-variant underline mt-0.5"
                     >
                       Remover foto
@@ -563,6 +672,21 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, targe
                 </div>
               </div>
             </div>
+            <input
+              type="text"
+              value={photoUrlInput}
+              onChange={(e) => {
+                setPhotoUrlInput(e.target.value);
+                setPhotoDataUrl(null);
+                setPhotoError(
+                  e.target.value.trim() && !/^https?:\/\//i.test(e.target.value.trim())
+                    ? 'A ligação deve começar por http:// ou https://'
+                    : null
+                );
+              }}
+              placeholder="…ou cola a ligação de uma imagem (https://...)"
+              className={`${fieldClass} mt-2`}
+            />
           </div>
 
           {/* Checklist real */}
@@ -604,6 +728,12 @@ export const ReportModal: React.FC<ReportModalProps> = ({ isOpen, onClose, targe
               className="w-full p-3 rounded-xl bg-surface-container-low text-on-surface text-sm border border-surface-container-high focus:outline-none focus:ring-2 focus:ring-primary resize-none"
             />
           </div>
+
+          {submitError && (
+            <p role="alert" className="text-xs text-error bg-error/10 rounded-xl px-3 py-2">
+              {submitError}
+            </p>
+          )}
 
           <div className="flex items-center justify-end gap-2 pt-2 border-t border-surface-container-high">
             <button

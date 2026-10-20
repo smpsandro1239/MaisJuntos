@@ -1,8 +1,38 @@
 # Evidência de Requisitos — +JUNTOS (FASE 3)
 
-Data: 19 de Outubro de 2026
+Data: 20 de Outubro de 2026
 Complementa `docs/requirements.md` (matriz FASE 0). Aqui cada grupo de requisitos
 tem a **prova de execução** correspondente e o estado final.
+
+## Artefactos publicados (validação em produção)
+
+- **Worker Cloudflare** (backend): `juntos-backend`, Version ID
+  `24c7094f-912f-4398-9c8b-db39c9e6fb27`
+  (https://juntos-backend.smpsandro1239.workers.dev). Registo devolve
+  `"provider":"password"` (verificado: `register 201`).
+- **Vercel** (frontend): deployment `dpl_5chPQKUn18QrT4R9Kioa1HmzRf9W`,
+  Production URL https://maisjuntos-five.vercel.app. Bundle publicado
+  (`/assets/index-*.js`) **não contém** `ws://localhost`; o alvo WS é
+  `wss://juntos-backend.smpsandro1239.workers.dev/ws`.
+
+### Validação em browser real (produção) — `tests/e2e/prod-validate.mjs`
+
+Browser Chromium real (Playwright) contra https://maisjuntos-five.vercel.app com
+cliques reais. Resultado: **15/15 PASS**.
+
+| Passo | Requisito | Prova |
+|---|---|---|
+| Estado inicial | RF-AUTH (P1) | perfil `title="Família Visitante"`; sem email de pessoa real |
+| Clique no avatar ×2 | P2 | AuthModal abre → fecha (botão) → reabre (clique real) |
+| Registo | RF-AUTH-01/02 | `register 201`; badge «Sincronização em tempo real ativa» |
+| Bilhete WS | RF-RT-02 | `POST /api/auth/ws-ticket → 200` |
+| Handshake WS | RF-RT-01 | `wss://…workers.dev/ws?ticket=…` aberto (`101`) |
+| Propor espaço (s/ GPS) | RF-PROPOSE-01 | `POST /api/reports → 201` |
+| Terminar sessão | P2 / RF-AUTH-03 | modal fecha (sem backdrop); volta a «Família Visitante» |
+| Apagar conta | RF-RGPD-03 | `DELETE /api/auth/account → 200`; reload → visitante |
+
+Nota: os registos de teste criados pela validação usam o marcador `[teste]` e foram
+removidos da base Turso partilhada após a execução (0 contas/reportes residuais).
 
 ## Legenda de estado final
 
@@ -44,6 +74,7 @@ automatizado (ou saída de execução colada) que o exerça. Inferir do código
 | `npm run build:e2e` | artefacto de teste `dist-e2e/` | OK |
 | `npm run test:e2e` | browser local (Playwright + `webServer`) | 3/3 |
 | `E2E_STAGING=1 npx playwright test tests/e2e/staging.spec.ts` | protocolo contra o Worker | 2/2 |
+| `node tests/e2e/prod-validate.mjs` | **browser real contra produção** | 15/15 |
 | `npm run build` | build de produção (sem `ws://localhost`) | OK |
 | `(cd juntos-backend && npx tsc --noEmit)` | tipos do Worker | OK |
 
@@ -53,11 +84,12 @@ automatizado (ou saída de execução colada) que o exerça. Inferir do código
 
 - Registo, política de password, verificação/reenvio, reposição, force-brute,
   `me`, logout: `tests/auth-flow.test.ts` (1–15) e E2E local.
-- **RF-AUTH-02 (PASS)**: `POST /api/auth/login` devolve `user.provider === 'password'`.
-  Provado por HTTP (auth-flow 6d) e no browser (E2E local: após login aparece o
-  badge «Sincronização em tempo real ativa» e há `POST /api/auth/ws-ticket` 200).
-- **RF-AUTH-03 (PASS)**: logout invalida a sessão — E2E local (o perfil volta a
-  «Família Visitante») e auth-flow 10.
+- **RF-AUTH-02 (PASS, incluindo produção)**: `POST /api/auth/register|login`
+  devolve `user.provider === 'password'`. Provado por HTTP (auth-flow 6d), E2E
+  local, Worker deployado (`register 201` → `provider:"password"`) e browser real
+  em produção (badge «Sincronização em tempo real ativa» + `ws-ticket` 200).
+- **RF-AUTH-03 (PASS)**: logout invalida a sessão — E2E local (perfil volta a
+  «Família Visitante»), auth-flow 10 e produção (`prod-validate.mjs`).
 - **RF-AUTH-10 / RF-AUTH-11 (BLOCKED)**: login Google/GitHub — falta
   `GOOGLE_CLIENT_ID/SECRET` e `GITHUB_CLIENT_ID/SECRET`. Pedido devolve
   `503 not_configured` (provado) mas o fluxo completo não é executável.
@@ -67,7 +99,7 @@ automatizado (ou saída de execução colada) que o exerça. Inferir do código
 
 - **RF-RGPD-03 (PASS)**: direito ao esquecimento pela UI — E2E local clica
   «Apagar a minha conta…» → `DELETE /api/auth/account` 200 → reload mostra
-  visitante; igualmente em staging (`staging.spec.ts`).
+  visitante; igualmente em **produção** (`prod-validate.mjs`, 200) e staging.
 - **RF-RGPD-04 (AUSENTE)**: exportação de dados (portabilidade).
 
 ### RF-POI / RF-REPORT / RF-PROPOSE — PASS (uma lacuna)
@@ -98,9 +130,10 @@ automatizado (ou saída de execução colada) que o exerça. Inferir do código
 
 ### RF-RT — PASS (uma melhoria)
 
-- **RF-RT-01 / RF-RT-02 (PASS)**: handshake autenticado. Local: E2E abre o
-  WebSocket após login. Staging: `staging.spec.ts` faz register → `ws-ticket` →
-  handshake real `101` com `?ticket=`.
+- **RF-RT-01 / RF-RT-02 (PASS, incluindo produção)**: handshake autenticado.
+  Local: E2E abre o WebSocket após login. **Produção**: `prod-validate.mjs`
+  confirma badge WS ON + `POST /api/auth/ws-ticket → 200` +
+  `wss://…workers.dev/ws?ticket=…` (`101`). Staging: `staging.spec.ts` idem.
 - **RF-RT-05 (PARCIAL)**: reconexão tem atrasos fixos (3s/4s), não backoff
   exponencial (`src/context/RealtimeContext.tsx`).
 
@@ -137,10 +170,10 @@ automatizado (ou saída de execução colada) que o exerça. Inferir do código
 
 ## Notas de verificação (observações relevantes)
 
-- **Staging corre código antigo**: `register` no Worker devolve
-  `provider: "guest"` (o fix só existe localmente, não foi deployado). Só depois de
-  um deploy é que a validação browser do WS em staging prova o fix — a prova
-  protocolar (ws-ticket/101) já passa.
+- **Worker deployado (ciclo fechado)**: a versão antiga devolvia
+  `provider: "guest"` no `register`. Após o deploy (`24c7094f-…`) o Worker devolve
+  `provider: "password"` e a validação browser em produção confirma o WS ON com
+  `ws-ticket 200` + handshake `101`. O bug original está fechado em produção.
 - **Utilizador-semente corrigido (P1)**: o estado inicial passou a ser
   `GUEST_USER` («Família Visitante», sem email, `trustScore: 0`, sem avatar/filhos
   de pessoa real). A semente de demonstração (favoritos) só é aplicada com
@@ -150,9 +183,10 @@ automatizado (ou saída de execução colada) que o exerça. Inferir do código
   banner de verificação de email para **abaixo** do header (variável CSS
   `--verify-banner-h`). Causa real do clique bloqueado: após «Terminar Sessão» o
   `AuthModal` **não fechava**, e o seu backdrop (`fixed inset-0 z-50`) intercetava
-  o clique seguinte no perfil — agora `logout()` faz `setAuthModalOpen(false)`. O
-  antigo `dispatchEvent('click')` escondia este bug; o E2E local usa `.click()`
-  real (3/3, estável com `--repeat-each=2`).
+  o clique seguinte no perfil — agora `logout()` faz `setAuthModalOpen(false)` e
+  clicar no **backdrop** também fecha o modal. O antigo `dispatchEvent('click')`
+  escondia este bug; o E2E local usa `.click()` real (3/3, estável com
+  `--repeat-each=2`) e a produção confirma-o (`prod-validate.mjs`).
 - **Artefactos separados (P3)**: `npm run build` → `dist/` (produção, nunca
   `ws://localhost`); `npm run build:e2e` → `dist-e2e/` (com `VITE_WS_URL` local),
   servido pelo `webServer` do Playwright. Verificar que o bundle de produção não

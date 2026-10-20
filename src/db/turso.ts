@@ -230,7 +230,9 @@ export async function getAllReportsFromDb(): Promise<CommunityReport[]> {
     if (row.data) {
       try {
         const parsed = JSON.parse(String(row.data)) as CommunityReport;
-        if (parsed && parsed.id && parsed.poiId) {
+        // Reportes de espaço existente têm `poiId`; as propostas de espaço novo
+        // (new_place) não têm POI, mas trazem `proposedPlace`. Ambos são válidos.
+        if (parsed && parsed.id && (parsed.poiId || parsed.proposedPlace)) {
           return parsed;
         }
       } catch {

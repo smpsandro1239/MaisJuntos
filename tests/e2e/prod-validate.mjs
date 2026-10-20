@@ -3,7 +3,23 @@
 // Usa um browser real (Chromium) com cliques reais e observa:
 //   P1 semente, P2 clique no perfil, WS ON + ws-ticket 200 + 101, RF-PROPOSE-01,
 //   logout/fecho do modal, RGPD.
+//
 // Requer o header OIDC (Deployment Protection) — lido de .env.local, nunca impresso.
+//
+// Antes de correr: regenerar o token OIDC (expira ~12h):
+//   npx vercel env pull .env.local --yes
+// O ficheiro .env.local está no .gitignore; nunca imprimir o token.
+//
+// Nota sobre dados de teste em PRODUÇÃO: o Worker NÃO expõe o hook
+// POST /api/dev/cleanup-test-data (existe apenas no Express, fora de produção).
+// Um reporte de teste criado aqui (RF-PROPOSE-01) fica persistido e tem de ser
+// removido manualmente via Turso:
+//   DELETE FROM reports WHERE reporterName LIKE '[teste]%';
+//   DELETE FROM report_photos WHERE reportId NOT IN (SELECT id FROM reports);
+// As contas de teste (emails prod.check.*@maisjuntos.pt) removem-se via
+// DELETE /api/auth/account (feito por este script no último passo) ou:
+//   DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'prod.check.%');
+//   DELETE FROM users WHERE email LIKE 'prod.check.%';
 import { chromium } from 'playwright';
 import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';

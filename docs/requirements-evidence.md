@@ -102,14 +102,28 @@ automatizado (ou saída de execução colada) que o exerça. Inferir do código
   visitante; igualmente em **produção** (`prod-validate.mjs`, 200) e staging.
 - **RF-RGPD-04 (AUSENTE)**: exportação de dados (portabilidade).
 
-### RF-POI / RF-REPORT / RF-PROPOSE — PASS (uma lacuna)
+### RF-POI / RF-REPORT / RF-PROPOSE — PASS
 
 - POI criar/detalhe/404, favoritos CRUD + 401: `tests/api-coverage.test.ts`.
 - Reportes criar (201) e moderação admin: `tests/api-coverage.test.ts`.
 - Proposta de novo espaço com GPS/link (RF-PROPOSE-01–04): `tests/api-coverage.test.ts`
   e geo (`src/utils/geoLink.ts`, 8/8).
-- **RF-PROPOSE-05 (AUSENTE)**: aprovar uma proposta e materializá-la como POI no
-  catálogo — não existe rota/UI. Buraco funcional de MVP.
+- **RF-PROPOSE-05 (PASS)**: aprovar proposta materializa um POI no catálogo.
+  - `POST /api/reports/:id/approve` (Worker `juntos-backend/src/routes/reports.ts` +
+    Express `server.ts`, `requireRole(['admin','curator'])`): 404 inexistente ·
+    400 `issueType≠new_place`/sem `proposedPlace` · 409 já resolvido · 200 cria POI
+    (`status:'review'`, `verifiedSource:'Proposta comunitária aprovada'`), marca o
+    reporte `resolved` com `linkedPoiId`, append a `metrics.recentEditorialActions`
+    e broadcast `poi:create`+`report:update`.
+  - Prova API (`tests/api-coverage.test.ts`): 22/22 PASS — casos 7/7b–7g cobrem
+    201/401/403/404/200/409 + POI em `GET /api/pois`.
+  - Prova browser (`tests/e2e/local.spec.ts`, teste `RF-PROPOSE-05`): login admin na
+    UI → backoffice → cartão da proposta → botão «Aprovar espaço» → `POST …/approve`
+    200 → POI na API pública (`status:'review'`). Suite E2E local: 4 passed, 2 skipped.
+  - Bug corrigido no caminho: `getAllReportsFromDb` rejeitava propostas (sem `poiId`)
+    e reconstruía o reporte sem `proposedPlace`, tornando-as inaproveitáveis após
+    reload. Guarda passou a aceitar `parsed.poiId || parsed.proposedPlace`
+    (`src/db/turso.ts:233`, `juntos-backend/src/db/index.ts:237`).
 
 ### RF-FAV / RF-PLAN — PASS
 
@@ -162,11 +176,9 @@ automatizado (ou saída de execução colada) que o exerça. Inferir do código
 
 ## Lacunas e riscos abertos (MVP)
 
-1. **RF-PROPOSE-05** — aprovar proposta → POI. Buraco funcional no fluxo principal
-   de curadoria. *MVP.*
-2. **RF-RGPD-04** — exportação de dados pessoais. *Backlog legal.*
-3. **RF-AUTH-10/11** — OAuth bloqueado por credenciais. *Bloqueado externo.*
-4. **RF-PWA-01/02**, **RF-OPS-04/05/06** — operação/distribuição. *Backlog.*
+1. **RF-RGPD-04** — exportação de dados pessoais. *Backlog legal.*
+2. **RF-AUTH-10/11** — OAuth bloqueado por credenciais. *Bloqueado externo.*
+3. **RF-PWA-01/02**, **RF-OPS-04/05/06** — operação/distribuição. *Backlog.*
 
 ## Notas de verificação (observações relevantes)
 

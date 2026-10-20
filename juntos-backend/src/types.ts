@@ -145,6 +145,8 @@ export interface CommunityReport {
   gpsDistanceProofMeters: number;
   checklist: Array<{ id: string; label: string; checked: boolean }>;
   proposedPlace?: ProposedPlace;
+  /** POI criado a partir desta proposta após aprovação (RF-PROPOSE-05). */
+  linkedPoiId?: string;
   createdAt: string;
 }
 

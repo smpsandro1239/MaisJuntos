@@ -88,7 +88,7 @@ Prova de execução: ver `docs/requirements-evidence.md` (FASE 3).
 | RF-PROPOSE-02 | Localização por GPS **ou** link colado | Sem GPS mas com `locationLink` → aceite e coordenadas extraídas | Implementado | MVP | `src/utils/geoLink.ts`; teste 9b |
 | RF-PROPOSE-03 | Foto por upload ou por link | `photoProofUrl` opcional | Implementado | MVP | teste 9c |
 | RF-PROPOSE-04 | Campos dos filtros na proposta | `spaceType`, `hasStrollerAccess`, `hasParking`, `isOpenNow` persistidos | Implementado | MVP | teste 9d |
-| RF-PROPOSE-05 | Aprovar proposta → criar POI no catálogo | Admin aprova e o espaço passa a existir em `GET /api/pois` | **Ausente** | MVP | grep `approve`/`proposal.*poi` sem resultado — buraco funcional |
+| RF-PROPOSE-05 | Aprovar proposta → criar POI no catálogo | Admin aprova e o espaço passa a existir em `GET /api/pois` | Implementado | MVP | `POST /api/reports/:id/approve` (Worker + Express) + botão «Aprovar espaço» no backoffice; provas em `tests/api-coverage.test.ts` (casos 7/7b–7g) e `tests/e2e/local.spec.ts` |
 
 ---
 
@@ -186,9 +186,9 @@ Prova de execução: ver `docs/requirements-evidence.md` (FASE 3).
 
 | Estado | Quantidade |
 |---|---|
-| Implementado | 47 |
+| Implementado | 48 |
 | Parcial | 3 (RF-WEATHER-02, RF-RT-05, RF-OPS-03) |
-| Ausente | 6 (RF-PROPOSE-05, RF-RGPD-04, RF-AUTH-13, RF-SEC-07, RF-OPS-04/05/06, RF-PWA-01/02 → contagem por requisito) |
+| Ausente | 5 (RF-RGPD-04, RF-AUTH-13, RF-SEC-07, RF-OPS-04/05/06, RF-PWA-01/02 → contagem por requisito) |
 | Bloqueado | 2 (RF-AUTH-10, RF-AUTH-11) |
 
 > Nota: as contagens devem ser revalidadas na FASE 3 quando cada requisito tiver evidência de execução.

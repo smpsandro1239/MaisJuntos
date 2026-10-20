@@ -208,7 +208,7 @@ export async function findUserByEmail(client: Client, email: string): Promise<Db
 
 export async function findUserById(client: Client, id: string): Promise<User | null> {
   const rs = await client.execute({
-    sql: 'SELECT id, email, name, role, trust_score, avatar FROM users WHERE id = ? LIMIT 1',
+    sql: 'SELECT id, email, name, role, trust_score, avatar, provider FROM users WHERE id = ? LIMIT 1',
     args: [id],
   });
   if (!rs.rows.length) return null;
@@ -219,7 +219,7 @@ export async function findUserById(client: Client, id: string): Promise<User | n
     name: String(row.name),
     role: row.role as UserRole,
     avatar: String(row.avatar || ''),
-    provider: 'password',
+    provider: (row.provider as User['provider']) || 'password',
     trustScore: Number(row.trust_score || 90),
   };
 }
@@ -242,8 +242,8 @@ export async function createUser(
 
   await client.execute({
     sql: `
-      INSERT INTO users (id, email, password_hash, name, role, trust_score, avatar, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO users (id, email, password_hash, name, role, trust_score, avatar, provider, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'password', ?, ?)
     `,
     args: [userId, normalizedEmail, passwordHash, data.name, role, 90, avatar, now, now],
   });
@@ -325,13 +325,14 @@ export async function createOAuthUser(
   const avatar =
     data.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(data.name)}`;
   const verified = data.emailVerified ? 1 : 0;
+  const provider: 'google' | 'github' | 'guest' = data.provider ?? 'guest';
 
   await client.execute({
     sql: `
-      INSERT INTO users (id, email, password_hash, name, role, trust_score, avatar, email_verified, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'parent', 90, ?, ?, ?, ?)
+      INSERT INTO users (id, email, password_hash, name, role, trust_score, avatar, email_verified, provider, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'parent', 90, ?, ?, ?, ?, ?)
     `,
-    args: [userId, normalizedEmail, unusableHash, data.name, avatar, verified, now, now],
+    args: [userId, normalizedEmail, unusableHash, data.name, avatar, verified, provider, now, now],
   });
 
   return {
@@ -340,7 +341,7 @@ export async function createOAuthUser(
     name: data.name,
     role: 'parent',
     avatar,
-    provider: data.provider ?? 'guest',
+    provider,
     emailVerified: Boolean(data.emailVerified),
     trustScore: 90,
   };
@@ -389,7 +390,8 @@ export async function getSessionWithUser(
         u.role,
         u.trust_score,
         u.email_verified,
-        u.avatar
+        u.avatar,
+        u.provider
       FROM sessions s
       JOIN users u ON s.user_id = u.id
       WHERE s.id = ?
@@ -424,7 +426,7 @@ export async function getSessionWithUser(
       name: String(row.name),
       role: row.role as UserRole,
       avatar: String(row.avatar || ''),
-      provider: 'password',
+      provider: (row.provider as User['provider']) || 'password',
       emailVerified: Number(row.email_verified || 0) === 1,
       trustScore: Number(row.trust_score || 90),
     },

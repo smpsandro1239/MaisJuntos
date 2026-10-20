@@ -247,6 +247,43 @@ export const migrations: Migration[] = [
       });
     },
   },
+  {
+    version: '007',
+    name: 'add_user_provider_column',
+    up: async (client: Client) => {
+      // Método de autenticação de origem da conta. Antes desta coluna o
+      // `provider` era inferido no código (hardcoded 'password'), o que mentia
+      // para contas OAuth. Passa a persistir-se o valor real.
+      // Espelho da migração 007 do Worker (juntos-backend/src/db/migrations.ts).
+      let temColuna = false;
+      try {
+        const info = await client.execute('PRAGMA table_info(users)');
+        temColuna = info.rows.some((r: any) => String(r.name) === 'provider');
+      } catch {
+        temColuna = false;
+      }
+      if (!temColuna) {
+        try {
+          await client.execute("ALTER TABLE users ADD COLUMN provider TEXT DEFAULT 'password'");
+        } catch {
+          // Corrida entre dois arranques: a coluna já terá sido criada.
+        }
+      }
+      // Backfill: contas OAuth reconhecem-se via `oauth_accounts`; as restantes
+      // ficam como 'password' (valor por omissão da coluna).
+      await client.execute(`
+        UPDATE users
+           SET provider = (
+             SELECT oa.provider FROM oauth_accounts oa
+              WHERE oa.user_id = users.id
+              ORDER BY oa.created_at ASC
+              LIMIT 1
+           )
+         WHERE provider IS NULL
+           AND EXISTS (SELECT 1 FROM oauth_accounts oa WHERE oa.user_id = users.id)
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(client: Client): Promise<void> {

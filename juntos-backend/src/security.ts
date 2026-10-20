@@ -141,6 +141,9 @@ export function requireRole(allowedRoles: UserRole[]): MiddlewareHandler<AppEnv>
 const LIMITES = {
   AUTH_RATE_LIMITER: { limite: 5, periodo: 60 },
   API_RATE_LIMITER: { limite: 60, periodo: 60 },
+  // Submissão de reportes/propostas: orçamento anti-spam próprio (5/min por IP),
+  // alinhado com o Express. Independente do AUTH_RATE_LIMITER partilhado.
+  REPORT_RATE_LIMITER: { limite: 5, periodo: 60 },
   // O WebSocket reconecta após login e em caso de queda; 30/min evita abuso
   // sem estrangular reconexões legítimas.
   WS_TICKET_RATE_LIMITER: { limite: 30, periodo: 60 },

@@ -3,9 +3,25 @@ import { useRealtime } from '../../context/RealtimeContext';
 import { CommunityReport } from '../../types';
 
 export const ReportsScreen: React.FC = () => {
-  const { reports, resolveReport } = useRealtime();
+  const { reports, resolveReport, approveReport } = useRealtime();
 
   const [selectedReportId, setSelectedReportId] = useState<string>('rep-4091');
+  const [approvingId, setApprovingId] = useState<string>('');
+
+  // RF-PROPOSE-05: só propostas de espaço novo (new_place) ainda não resolvidas
+  // podem ser aprovadas, criando a ficha POI no diretório.
+  const canApprove = (report: CommunityReport) =>
+    report.issueType === 'new_place' && report.status !== 'resolved' && !report.linkedPoiId;
+
+  const handleApprove = async (reportId: string) => {
+    setApprovingId(reportId);
+    const result = await approveReport(reportId);
+    setApprovingId('');
+    if (!result.ok && result.error) {
+      alert(result.error);
+    }
+  };
+
   const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'in_review' | 'resolved'>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
 
@@ -340,6 +356,16 @@ export const ReportsScreen: React.FC = () => {
                     </div>
 
                     <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                      {canApprove(report) && (
+                        <button
+                          onClick={() => handleApprove(report.id)}
+                          disabled={approvingId === report.id}
+                          className="px-3 py-1 rounded-xl bg-secondary text-on-secondary font-label-md text-xs font-bold shadow-xs hover:opacity-95 transition-opacity flex items-center gap-1 disabled:opacity-60"
+                        >
+                          <span className="material-symbols-outlined text-[15px]">add_location_alt</span>
+                          {approvingId === report.id ? 'A aprovar…' : 'Aprovar espaço'}
+                        </button>
+                      )}
                       <button
                         onClick={() => resolveReport(report.id, true)}
                         className="px-3 py-1 rounded-xl bg-primary text-on-primary font-label-md text-xs font-bold shadow-xs hover:opacity-95 transition-opacity flex items-center gap-1"
@@ -461,6 +487,16 @@ export const ReportsScreen: React.FC = () => {
 
               {/* Final Actions */}
               <div className="flex flex-col gap-2 pt-1 border-t border-surface-container-high">
+                {canApprove(selectedReport) && (
+                  <button
+                    onClick={() => handleApprove(selectedReport.id)}
+                    disabled={approvingId === selectedReport.id}
+                    className="w-full py-3 rounded-xl bg-secondary text-on-secondary font-label-lg text-xs font-bold shadow-xs hover:opacity-95 transition-all flex items-center justify-center gap-2 active:scale-95 disabled:opacity-60"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">add_location_alt</span>
+                    <span>{approvingId === selectedReport.id ? 'A aprovar espaço…' : 'Aprovar espaço (criar ficha no diretório)'}</span>
+                  </button>
+                )}
                 <button
                   onClick={() => resolveReport(selectedReport.id, true)}
                   className="w-full py-3 rounded-xl bg-primary text-on-primary font-label-lg text-xs font-bold shadow-xs hover:opacity-95 transition-all flex items-center justify-center gap-2 active:scale-95"

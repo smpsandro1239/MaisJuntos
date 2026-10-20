@@ -28,6 +28,7 @@ interface RealtimeContextType {
     report: Partial<CommunityReport> & { photo?: string; photoProofUrl?: string }
   ) => Promise<{ ok: boolean; error?: string }>;
   resolveReport: (reportId: string, applyToPoi?: boolean) => Promise<void>;
+  approveReport: (reportId: string) => Promise<{ ok: boolean; error?: string }>;
   togglePlanB: () => Promise<void>;
   changeCity: (city: string) => Promise<void>;
 }
@@ -274,6 +275,35 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
+  // RF-PROPOSE-05: aprova uma proposta de espaço novo. Cria o POI (em revisão),
+  // resolve o reporte e liga-os. Só admin/curador (a API valida o papel).
+  const approveReport = async (reportId: string): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const res = await fetch(`${API_BASE}/api/reports/${reportId}/approve`, {
+        credentials: 'include',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        const body = (await res.json()) as { poi: POI; report: CommunityReport };
+        setPois((prev) => (prev.some((p) => p.id === body.poi.id) ? prev : [body.poi, ...prev]));
+        setReports((prev) => prev.map((r) => (r.id === reportId ? body.report : r)));
+        addToast('Proposta Aprovada', `"${body.poi.name}" criado no diretório (em revisão editorial).`);
+        return { ok: true };
+      }
+      let message = 'Não foi possível aprovar a proposta.';
+      try {
+        const body = (await res.json()) as { error?: string };
+        if (body?.error) message = body.error;
+      } catch {
+        // resposta sem corpo JSON
+      }
+      return { ok: false, error: message };
+    } catch {
+      return { ok: false, error: 'Falha de rede. Verifica a ligação e tenta novamente.' };
+    }
+  };
+
   const togglePlanB = async () => {
     const nextState = !familyPlan.isPlanBActive;
     setFamilyPlan((prev) => ({
@@ -323,6 +353,7 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         deletePoi,
         submitReport,
         resolveReport,
+        approveReport,
         togglePlanB,
         changeCity,
       }}

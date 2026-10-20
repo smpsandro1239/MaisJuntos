@@ -196,6 +196,120 @@ async function runApiCoverageSuite() {
     assert('5. POST /api/reports cria reporte (201)', false, err.message);
   }
 
+  // RF-PROPOSE-05: aprovar proposta de novo espaço (cria POI em revisão).
+  let approvedPoiId = '';
+  try {
+    const create = await fetch(`${BASE_URL}/api/reports`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        issueType: 'new_place',
+        issueLabel: 'Novo espaço',
+        reporterName: '[teste] API Propose',
+        comment: 'Proposta de espaço para o teste de aprovação.',
+        proposedPlace: {
+          name: `[teste] Espaço Aprovado ${stamp}`,
+          category: 'parque',
+          address: 'Rua da Proposta 12',
+          city: 'Braga',
+          scheduleNote: 'Todos os dias, 09:00-18:00',
+        },
+      }),
+    });
+    const created = await jsonOf(create);
+    const propId = created.id;
+    assert(
+      '7. POST /api/reports (new_place) cria proposta (201)',
+      create.status === 201 && created.issueType === 'new_place',
+      `status ${create.status}, id ${propId}`
+    );
+
+    const noAuth = await fetch(`${BASE_URL}/api/reports/${propId}/approve`, { method: 'POST' });
+    assert('7b. POST /api/reports/:id/approve sem sessão → 401', noAuth.status === 401, `status ${noAuth.status}`);
+
+    const asParent = await fetch(`${BASE_URL}/api/reports/${propId}/approve`, {
+      method: 'POST',
+      headers: { Cookie: parentCookie },
+    });
+    assert('7c. Aprovar como parent → 403', asParent.status === 403, `status ${asParent.status}`);
+
+    const missing = await fetch(`${BASE_URL}/api/reports/nao-existe-${stamp}/approve`, {
+      method: 'POST',
+      headers: { Cookie: adminCookie },
+    });
+    assert('7d. Aprovar reporte inexistente → 404', missing.status === 404, `status ${missing.status}`);
+
+    const approve = await fetch(`${BASE_URL}/api/reports/${propId}/approve`, {
+      method: 'POST',
+      headers: { Cookie: adminCookie },
+    });
+    const approved = await jsonOf(approve);
+    approvedPoiId = approved.poi?.id || '';
+    assert(
+      '7e. Aprovar proposta (admin) → 200, POI em revisão e reporte resolvido',
+      approve.status === 200 &&
+        approved.success === true &&
+        approved.poi?.status === 'review' &&
+        approved.poi?.verifiedSource === 'Proposta comunitária aprovada' &&
+        approved.report?.status === 'resolved' &&
+        approved.report?.linkedPoiId === approvedPoiId,
+      `status ${approve.status}, poi.status ${approved.poi?.status}, report.status ${approved.report?.status}`
+    );
+
+    const again = await fetch(`${BASE_URL}/api/reports/${propId}/approve`, {
+      method: 'POST',
+      headers: { Cookie: adminCookie },
+    });
+    assert('7f. Aprovar proposta já aprovada → 409', again.status === 409, `status ${again.status}`);
+
+    const poisList = await jsonOf(await fetch(`${BASE_URL}/api/pois`));
+    const inDirectory =
+      Array.isArray(poisList) && Boolean(approvedPoiId) && poisList.some((p: any) => p.id === approvedPoiId);
+    assert('7g. POI aprovado aparece em GET /api/pois', inDirectory, `poi ${approvedPoiId} presente ${inDirectory}`);
+  } catch (err: any) {
+    assert('7. POST /api/reports (new_place) cria proposta (201)', false, err.message);
+  }
+
+  // BLOCO 1.1: limite anti-spam de submissão de reportes (5/min por IP).
+  try {
+    let last = 0;
+    for (let i = 0; i < 7; i++) {
+      const res = await fetch(`${BASE_URL}/api/reports`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          issueType: 'new_place',
+          issueLabel: 'Novo espaço',
+          reporterName: '[teste] API Ratelimit',
+          comment: `probe rate-limit ${i}`,
+          proposedPlace: { name: `[teste] RL ${stamp}-${i}`, category: 'parque', address: 'Rua X', city: 'Braga' },
+        }),
+      });
+      last = res.status;
+    }
+    assert('11. Limite de reportes: 7.ª submissão → 429', last === 429, `última submissão status ${last}`);
+  } catch (err: any) {
+    assert('11. Limite de reportes: 7.ª submissão → 429', false, err.message);
+  }
+
+  // BLOCO 1.2: o provider persiste e é devolvido em /api/auth/me.
+  try {
+    const me = await jsonOf(await fetch(`${BASE_URL}/api/auth/me`, { headers: { Cookie: parentCookie } }));
+    assert(
+      '12. /api/auth/me devolve provider persistido (password)',
+      me?.user?.provider === 'password',
+      `provider ${me?.user?.provider}`
+    );
+  } catch (err: any) {
+    assert('12. /api/auth/me devolve provider persistido (password)', false, err.message);
+  }
+
+  // Limpeza local: o POI criado pela aprovação não é abrangido pelo hook
+  // (o id não usa os prefixos de teste), pelo que é apagado aqui (admin).
+  if (approvedPoiId) {
+    await fetch(`${BASE_URL}/api/pois/${approvedPoiId}`, { method: 'DELETE', headers: { Cookie: adminCookie } });
+  }
+
   // RF-WEATHER-01: meteorologia por cidade (Open-Meteo + cache).
   try {
     const res = await fetch(`${BASE_URL}/api/weather?city=Braga, Centro`);

@@ -6,7 +6,7 @@ export interface User {
   email: string;
   avatar: string;
   role: UserRole;
-  provider: 'google' | 'github' | 'guest';
+  provider: 'google' | 'github' | 'password' | 'guest';
   emailVerified?: boolean;
   trustScore?: number;
   familyProfile?: {

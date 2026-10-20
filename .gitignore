@@ -1,9 +1,15 @@
 node_modules/
 build/
 dist/
+dist-e2e/
 coverage/
 .DS_Store
 *.log
+
+# Playwright
+playwright-report/
+test-results/
+.playwright/
 
 # Segredos locais — NUNCA versionar (ver SECRETS.md e .env.example)
 .env*

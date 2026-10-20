@@ -156,12 +156,12 @@ routes.post('/login', rateLimit('AUTH_RATE_LIMITER'), async (c) => {
     name: dbUser.name,
     role: dbUser.role,
     avatar: dbUser.avatar,
-    provider: 'guest',
+    provider: 'password',
     emailVerified: dbUser.email_verified,
     trustScore: dbUser.trust_score,
   };
 
-  return c.json({ success: true, user: safeUser, token: sessionId });
+  return c.json({ success: true, user: safeUser });
 });
 
 // POST /api/auth/ws-ticket — bilhete efémero para o handshake do WebSocket.

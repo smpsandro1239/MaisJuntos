@@ -302,7 +302,7 @@ export async function createUser(
     name: data.name,
     role,
     avatar,
-    provider: 'guest',
+    provider: 'password',
     emailVerified: false,
     trustScore: 90,
   };
@@ -366,7 +366,7 @@ export async function linkOAuthAccount(
 // (hash aleatório), papel 'parent' e email verificado conforme o provider.
 export async function createOAuthUser(
   client: Client,
-  data: { email: string; name: string; avatar?: string; emailVerified?: boolean }
+  data: { email: string; name: string; avatar?: string; emailVerified?: boolean; provider?: 'google' | 'github' }
 ): Promise<User> {
   const normalizedEmail = data.email.trim().toLowerCase();
   const userId = `usr-${crypto.randomUUID()}`;
@@ -390,7 +390,7 @@ export async function createOAuthUser(
     name: data.name,
     role: 'parent',
     avatar,
-    provider: 'guest',
+    provider: data.provider ?? 'guest',
     emailVerified: Boolean(data.emailVerified),
     trustScore: 90,
   };
@@ -468,7 +468,7 @@ export async function getSessionWithUser(client: Client, sessionId: string): Pro
       name: String(row.name),
       role: row.role as UserRole,
       avatar: String(row.avatar || ''),
-      provider: 'guest',
+      provider: 'password',
       emailVerified: Number(row.email_verified || 0) === 1,
       trustScore: Number(row.trust_score || 90),
     },

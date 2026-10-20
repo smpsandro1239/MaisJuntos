@@ -93,15 +93,19 @@ const AppContent: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-surface text-on-surface flex flex-col relative selection:bg-primary/20 selection:text-primary">
-      {/* Real-time Floating Control Bar (Experience Switcher & Live Diagnostics) */}
-      <div className="fixed top-2 right-2 z-50 flex items-center gap-1.5 p-1 bg-surface-container-lowest/90 backdrop-blur-md rounded-full shadow-lg border border-surface-container-high text-xs">
+      {/* Real-time Floating Control Bar (Experience Switcher & Live Diagnostics).
+          Ancorada em baixo à direita (acima da BottomNav) para nunca sobrepor os
+          controlos do header — em particular o avatar de perfil, que tem de
+          receber cliques reais. `pointer-events-none` no contentor + `auto` em
+          cada controlo garante que os espaçamentos também deixam passar cliques. */}
+      <div className="fixed bottom-20 right-2 z-40 flex items-center gap-1.5 p-1 bg-surface-container-lowest/90 backdrop-blur-md rounded-full shadow-lg border border-surface-container-high text-xs pointer-events-none">
         {/* Toggle Mode Button */}
         <button
           onClick={() => {
             setViewMode(viewMode === 'parent' ? 'admin' : 'parent');
             setSelectedPoiForDetail(null);
           }}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-label-md text-xs font-bold transition-all ${
+          className={`pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full font-label-md text-xs font-bold transition-all ${
             viewMode === 'parent'
               ? 'bg-primary text-on-primary shadow-xs'
               : 'bg-secondary text-on-secondary shadow-xs'
@@ -118,7 +122,7 @@ const AppContent: React.FC = () => {
         {viewMode === 'parent' && (
           <button
             onClick={togglePhoneFrameMode}
-            className={`p-1.5 rounded-full transition-colors ${
+            className={`pointer-events-auto p-1.5 rounded-full transition-colors ${
               phoneFrameMode
                 ? 'bg-primary-fixed text-primary'
                 : 'text-on-surface-variant hover:bg-surface-container'
@@ -132,7 +136,7 @@ const AppContent: React.FC = () => {
         {/* Dark Mode Toggle */}
         <button
           onClick={toggleDarkMode}
-          className="p-1.5 rounded-full text-on-surface-variant hover:bg-surface-container transition-colors"
+          className="pointer-events-auto p-1.5 rounded-full text-on-surface-variant hover:bg-surface-container transition-colors"
           title="Alternar Tema Claro/Escuro"
         >
           <span className="material-symbols-outlined text-[18px]">
@@ -190,7 +194,7 @@ const AppContent: React.FC = () => {
             />
 
             {/* Main Screen Stream */}
-            <main className="flex-1 w-full pt-16">
+            <main className="flex-1 w-full pt-[calc(4rem+var(--verify-banner-h,0px))]">
               {selectedPoiForDetail ? (
                 <PoiDetailScreen
                   poi={selectedPoiForDetail}
@@ -266,7 +270,7 @@ const AppContent: React.FC = () => {
             />
 
             {/* Admin Page Content */}
-            <main className="pt-16 px-4 sm:px-6 w-full max-w-7xl mx-auto flex-1 flex flex-col">
+            <main className="pt-[calc(4rem+var(--verify-banner-h,0px))] px-4 sm:px-6 w-full max-w-7xl mx-auto flex-1 flex flex-col">
               {adminTab === 'dashboard-geral' && (
                 <DashboardScreen
                   onNavigateTab={setAdminTab}

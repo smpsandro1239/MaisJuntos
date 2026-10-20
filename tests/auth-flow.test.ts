@@ -176,6 +176,39 @@ async function runAuthFlowSuite() {
     assert('6b. Bilhete WS exige sessão iniciada', false, err.message);
   }
 
+  // 6d. Regressão: login e /me devolvem provider 'password' (nunca 'guest').
+  //     Se voltar a 'guest', isLoggedIn fica false no frontend e o WebSocket
+  //     deixa de ligar (o guard `if (!isLoggedIn) return` corta o handshake).
+  try {
+    const provEmail = `provider.${stamp}@maisjuntos.pt`;
+    await fetch(`${BASE_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: provEmail, password: strongPw, name: 'Provider Teste' }),
+    });
+    const login = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: provEmail, password: strongPw }),
+    });
+    const loginData = await jsonOf(login);
+    const cookie = login.headers
+      .getSetCookie()
+      .map((c) => c.split(';')[0])
+      .join('; ');
+    const me = await fetch(`${BASE_URL}/api/auth/me`, { headers: { Cookie: cookie } });
+    const meData = await jsonOf(me);
+    assert(
+      '6d. Login e /me devolvem provider password',
+      login.status === 200 &&
+        loginData.user?.provider === 'password' &&
+        meData.user?.provider === 'password',
+      `login provider ${loginData.user?.provider}, me provider ${meData.user?.provider}`
+    );
+  } catch (err: any) {
+    assert('6d. Login e /me devolvem provider password', false, err.message);
+  }
+
   // 7. Força bruta: 5 falhas consecutivas bloqueiam a conta (423)
   try {
     const bfEmail = `forcabruta.${stamp}@maisjuntos.pt`;
@@ -366,6 +399,58 @@ async function runAuthFlowSuite() {
     );
   } catch (err: any) {
     assert('9d. Campos dos filtros persistidos', false, err.message);
+  }
+
+  // 10. Logout invalida a sessão na base de dados (RF-AUTH-03)
+  try {
+    const email10 = `logout.${stamp}@maisjuntos.pt`;
+    const reg = await fetch(`${BASE_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email10, password: strongPw, name: 'Logout Teste' }),
+    });
+    const cookie = reg.headers
+      .getSetCookie()
+      .map((c) => c.split(';')[0])
+      .join('; ');
+    const meBefore = await jsonOf(await fetch(`${BASE_URL}/api/auth/me`, { headers: { Cookie: cookie } }));
+    const out = await fetch(`${BASE_URL}/api/auth/logout`, { method: 'POST', headers: { Cookie: cookie } });
+    const meAfter = await jsonOf(await fetch(`${BASE_URL}/api/auth/me`, { headers: { Cookie: cookie } }));
+    assert(
+      '10. Logout invalida a sessão',
+      Boolean(meBefore.user) && (out.status === 200 || out.status === 204) && meAfter.user === null,
+      `antes ${Boolean(meBefore.user)}, status ${out.status}, depois ${meAfter.user}`
+    );
+  } catch (err: any) {
+    assert('10. Logout invalida a sessão', false, err.message);
+  }
+
+  // 11. Direito ao esquecimento (RF-RGPD-03): apagar conta remove o acesso
+  try {
+    const email11 = `rgpd.${stamp}@maisjuntos.pt`;
+    const reg = await fetch(`${BASE_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email11, password: strongPw, name: 'RGPD Teste' }),
+    });
+    const cookie = reg.headers
+      .getSetCookie()
+      .map((c) => c.split(';')[0])
+      .join('; ');
+    const del = await fetch(`${BASE_URL}/api/auth/account`, { method: 'DELETE', headers: { Cookie: cookie } });
+    const meAfter = await jsonOf(await fetch(`${BASE_URL}/api/auth/me`, { headers: { Cookie: cookie } }));
+    const relogin = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email11, password: strongPw }),
+    });
+    assert(
+      '11. Eliminação de conta remove o acesso',
+      del.ok && meAfter.user === null && relogin.status === 401,
+      `delete ${del.status}, me ${meAfter.user}, relogin ${relogin.status}`
+    );
+  } catch (err: any) {
+    assert('11. Eliminação de conta remove o acesso', false, err.message);
   }
 
   const fails = results.filter((r) => !r.passed);

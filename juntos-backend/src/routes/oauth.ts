@@ -242,6 +242,7 @@ oauth.get('/:provider/callback', async (c) => {
           name: profile.name,
           avatar: profile.avatar,
           emailVerified: profile.emailVerified,
+          provider: provider as 'google' | 'github',
         });
         await linkOAuthAccount(db, created.id, provider, profile.id);
         dbUser = await findUserByEmail(db, created.email);

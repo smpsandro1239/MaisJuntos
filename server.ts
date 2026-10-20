@@ -613,7 +613,7 @@ app.post('/api/auth/login', authLimiter, async (req, res, next) => {
       name: dbUser.name,
       role: dbUser.role,
       avatar: dbUser.avatar,
-      provider: 'guest',
+      provider: 'password',
       emailVerified: dbUser.email_verified,
       trustScore: dbUser.trust_score,
     };
@@ -960,6 +960,7 @@ app.get('/api/auth/oauth/:provider/callback', async (req, res) => {
           name: profile.name,
           avatar: profile.avatar,
           emailVerified: profile.emailVerified,
+          provider: provider as 'google' | 'github',
         });
         await linkOAuthAccount(client, created.id, provider, profile.id);
         dbUser = await findUserByEmail(client, created.email);
@@ -1547,9 +1548,12 @@ async function start() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+    // Em produção serve o build estático. `DIST_DIR` permite servir um build
+    // alternativo (ex.: `dist-e2e`, com o WebSocket apontado ao Express local).
+    const staticDir = path.resolve(__dirname, process.env.DIST_DIR || 'dist');
+    app.use(express.static(staticDir));
     app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      res.sendFile(path.resolve(staticDir, 'index.html'));
     });
   }
 

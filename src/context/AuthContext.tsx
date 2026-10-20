@@ -42,18 +42,29 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Visitante anónimo: identidade neutra (sem nome/email/avatar de pessoa real e
+// sem grau de confiança herdado da semente de desenvolvimento).
 const GUEST_USER: User = {
   ...INITIAL_USER,
+  id: 'usr-guest',
   name: 'Família Visitante',
   email: '',
+  avatar: 'https://api.dicebear.com/7.x/initials/svg?seed=Visitante',
   provider: 'guest',
   role: 'parent',
+  trustScore: 0,
+  familyProfile: { city: 'Braga', favorites: [], children: [] },
 };
+
+// Semente de demonstração (favoritos/conteúdo pré-populados). Desligada por
+// omissão: um visitante novo nunca pode arrancar autenticado nem com dados
+// pessoais de uma pessoa fictícia.
+const DEMO_SEED = import.meta.env.VITE_DEMO_SEED === '1';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User>(() => {
     const saved = localStorage.getItem('juntos_user');
-    return saved ? JSON.parse(saved) : INITIAL_USER;
+    return saved ? JSON.parse(saved) : GUEST_USER;
   });
 
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -69,7 +80,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [favorites, setFavorites] = useState<string[]>(() => {
     const saved = localStorage.getItem('juntos_favs');
-    return saved ? JSON.parse(saved) : ['poi-planetario-braga', 'poi-parque-ponte'];
+    if (saved) return JSON.parse(saved);
+    return DEMO_SEED ? ['poi-planetario-braga', 'poi-parque-ponte'] : [];
   });
 
   // Apply dark mode class to <html>
@@ -313,9 +325,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await fetch(`${API_BASE}/api/auth/logout`, { method: 'POST', credentials: 'include' });
     } catch {
-      // Ignore
+      // ignore
     }
     setUser(GUEST_USER);
+    setAuthModalOpenState(false);
   };
 
   // Direito ao esquecimento (RGPD): elimina a conta e todos os dados pessoais.

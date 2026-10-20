@@ -1,8 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 
 // Barra de aviso quando a conta tem sessão iniciada mas o email ainda não foi
 // confirmado. Permite reenviar o email de confirmação ou dispensar o aviso.
+//
+// É posicionada ABAIXO do header fixo e reserva a sua altura numa variável CSS
+// (`--verify-banner-h`), consumida pelo `padding-top` das <main>. Assim o aviso
+// nunca tapa o header (em especial o botão de perfil no canto superior direito).
 export const VerifyEmailBanner: React.FC = () => {
   const { user, isLoggedIn, resendVerification } = useAuth();
   const [dismissed, setDismissed] = useState(
@@ -10,8 +14,28 @@ export const VerifyEmailBanner: React.FC = () => {
   );
   const [status, setStatus] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
 
-  if (!isLoggedIn || user.emailVerified !== false || dismissed) return null;
+  const visible = isLoggedIn && user.emailVerified === false && !dismissed;
+
+  // Reserva espaço no topo (abaixo do header fixo de 4rem) para o aviso não o tapar.
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!visible) {
+      root.style.setProperty('--verify-banner-h', '0px');
+      return;
+    }
+    const apply = () => root.style.setProperty('--verify-banner-h', `${ref.current?.offsetHeight ?? 0}px`);
+    apply();
+    const observer = new ResizeObserver(apply);
+    if (ref.current) observer.observe(ref.current);
+    return () => {
+      observer.disconnect();
+      root.style.setProperty('--verify-banner-h', '0px');
+    };
+  }, [visible]);
+
+  if (!visible) return null;
 
   const handleResend = async () => {
     setSending(true);
@@ -26,7 +50,10 @@ export const VerifyEmailBanner: React.FC = () => {
   };
 
   return (
-    <div className="fixed top-0 inset-x-0 z-40 bg-primary text-on-primary px-4 py-2.5 shadow-md">
+    <div
+      ref={ref}
+      className="fixed top-[calc(4rem+env(safe-area-inset-top,0px))] inset-x-0 z-30 bg-primary text-on-primary px-4 py-2.5 shadow-md"
+    >
       <div className="max-w-5xl mx-auto flex items-center gap-3 flex-wrap justify-center sm:justify-between">
         <div className="flex items-center gap-2">
           <span className="material-symbols-outlined text-[20px]">mark_email_unread</span>

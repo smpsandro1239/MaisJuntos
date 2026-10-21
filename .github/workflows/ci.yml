@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Instalar dependências (raiz)
+        run: npm ci
+
+      - name: Lint (tsc --noEmit)
+        run: npm run lint
+
+      - name: Build de produção
+        run: npm run build
+
+      - name: Testes de geo
+        run: npm run test:geo
+
+      - name: Testes de atomicidade
+        run: npm run test:atomic
+
+      - name: Instalar dependências (Worker)
+        working-directory: juntos-backend
+        run: npm ci
+
+      - name: Lint do Worker (tsc --noEmit)
+        working-directory: juntos-backend
+        run: npx tsc --noEmit
+
+      - name: Testes do Worker
+        working-directory: juntos-backend
+        run: npx vitest run

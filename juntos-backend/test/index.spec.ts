@@ -1,14 +1,32 @@
 import { env, createExecutionContext, waitOnExecutionContext, SELF } from "cloudflare:test";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import worker from "../src/index";
 
-// Testes de integração do Worker +JUNTOS que não exigem Turso (bindings de
-// teste não trazem TURSO_DATABASE_URL/AUTH_TOKEN). Cobrem contrato HTTP:
-// healthcheck, 404 diferenciado (texto na raiz vs JSON em /api), cabeçalhos de
-// segurança e proteção CSRF. A paridade de rotas com dados é coberta por
-// tests/api-coverage.test.ts (Express).
+// Testes de integração do Worker +JUNTOS que NÃO exigem Turso. Cobrem o
+// contrato HTTP: healthcheck, 404 diferenciado (texto na raiz vs JSON em /api),
+// cabeçalhos de segurança, proteção CSRF e RBAC.
+//
+// O handler faz `initDatabase(env)` antes de encaminhar qualquer `/api/*` (exceto
+// /api/healthz e /api/db/status). Sem TURSO_DATABASE_URL/TURSO_AUTH_TOKEN (o caso
+// no CI, onde não há segredos) essa chamada lança e devolve 500 — o que impede
+// observar o 404/403/401 dessas rotas. Para correr sem Turso, `initDatabase` é
+// substituída por um no-op via `vi.mock` (que só se aplica a `worker.fetch`
+// direto, não ao `SELF`). Nenhum segredo é necessário; a paridade de rotas com
+// dados continua coberta por `tests/api-coverage.test.ts` (Express).
+vi.mock("../src/db/index", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/db/index")>();
+  return { ...actual, initDatabase: async () => {} };
+});
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
+
+// Executa um pedido pelo handler real com a BD "mockada" (initDatabase no-op).
+async function callWorker(input: string, init?: RequestInit): Promise<Response> {
+  const ctx = createExecutionContext();
+  const res = await worker.fetch(new IncomingRequest(input, init), env, ctx);
+  await waitOnExecutionContext(ctx);
+  return res;
+}
 
 describe("Worker +JUNTOS", () => {
   it("GET /api/healthz devolve provider cloudflare-workers", async () => {
@@ -20,16 +38,13 @@ describe("Worker +JUNTOS", () => {
   });
 
   it("raiz não-API devolve 404 com texto informativo", async () => {
-    const request = new IncomingRequest("https://example.com/");
-    const ctx = createExecutionContext();
-    const res = await worker.fetch(request, env, ctx);
-    await waitOnExecutionContext(ctx);
+    const res = await callWorker("https://example.com/");
     expect(res.status).toBe(404);
     expect(await res.text()).toContain("Servidor de API +JUNTOS");
   });
 
   it("rota /api inexistente devolve 404 JSON", async () => {
-    const res = await SELF.fetch("https://example.com/api/nao-existe");
+    const res = await callWorker("https://example.com/api/nao-existe");
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("Recurso não encontrado.");
@@ -48,7 +63,7 @@ describe("Worker +JUNTOS", () => {
   // validação (400/Zod). O contrato determinístico testável aqui é a recusa de
   // Origin NÃO autorizada (403), abaixo.
   it("CSRF: POST com Origin não autorizada → 403", async () => {
-    const res = await SELF.fetch("https://example.com/api/reports", {
+    const res = await callWorker("https://example.com/api/reports", {
       method: "POST",
       headers: { "Content-Type": "application/json", Origin: "https://atacante.example" },
       body: "{}",
@@ -66,7 +81,7 @@ describe("Worker +JUNTOS", () => {
   });
 
   it("aprovar proposta sem sessão → 401 (RBAC antes da lógica)", async () => {
-    const res = await SELF.fetch("https://example.com/api/reports/rep-inexistente/approve", {
+    const res = await callWorker("https://example.com/api/reports/rep-inexistente/approve", {
       method: "POST",
       headers: { Origin: "https://maisjuntos-five.vercel.app" },
     });

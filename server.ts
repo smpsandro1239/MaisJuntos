@@ -36,6 +36,9 @@ import {
   comparePassword,
   hashPassword,
   createAuthToken,
+  listUserSessions,
+  deleteUserSession,
+  deleteOtherUserSessions,
   consumeAuthToken,
   markEmailVerified,
   setUserPassword,
@@ -853,6 +856,58 @@ app.get('/api/auth/account/export', requireAuth, async (req, res, next) => {
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Cache-Control', 'no-store');
     return res.json(exportPayload);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Sessões ativas (RF-AUTH-13)
+app.get('/api/auth/account/sessions', requireAuth, async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const currentSessionId = (req as any).sessionId as string | undefined;
+    const sessions = await listUserSessions(client, user.id, currentSessionId);
+    res.json({ sessions: sessions.map((s) => ({ ...s, id: s.id.slice(0, 8) + '…', fullId: s.id })) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/auth/account/sessions/:id', requireAuth, async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const currentSessionId = (req as any).sessionId as string | undefined;
+    const targetId = req.params.id;
+    // Impedir terminar a própria sessão
+    if (targetId.length > 8) {
+      if (currentSessionId && targetId === currentSessionId) {
+        return res.status(400).json({ error: 'Não pode terminar a sessão atual.' });
+      }
+    }
+    // Procurar sessão completa (o cliente pode enviar o id truncado)
+    const all = await client.execute({
+      sql: 'SELECT id FROM sessions WHERE user_id = ?',
+      args: [user.id],
+    });
+    const match = all.rows.find((r: any) => String(r.id) === targetId || String(r.id).startsWith(targetId));
+    if (!match) return res.status(404).json({ error: 'Sessão não encontrada.' });
+    if (currentSessionId && String(match.id) === currentSessionId) {
+      return res.status(400).json({ error: 'Não pode terminar a sessão atual.' });
+    }
+    await deleteSession(client, String(match.id));
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/auth/account/sessions', requireAuth, async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const currentSessionId = (req as any).sessionId as string | undefined;
+    if (!currentSessionId) return res.status(400).json({ error: 'Sessão atual indisponível.' });
+    const deleted = await deleteOtherUserSessions(client, user.id, currentSessionId);
+    res.json({ success: true, deleted });
   } catch (err) {
     next(err);
   }

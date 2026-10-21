@@ -67,6 +67,20 @@ export const AuthModal: React.FC = () => {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [sessions, setSessions] = useState<
+    Array<{
+      id: string;
+      fullId?: string;
+      userAgent?: string;
+      ipMasked?: string;
+      createdAt: string;
+      expiresAt: string;
+      isCurrent: boolean;
+    }>
+  >([]);
+  const [loadingSessions, setLoadingSessions] = useState(false);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -133,10 +147,14 @@ export const AuthModal: React.FC = () => {
         return;
       }
       const blob = await res.blob();
+      const cd = res.headers.get('Content-Disposition') || '';
+      let filename = `juntos-export-${Date.now()}.json`;
+      const m = cd.match(/filename="?([^";]+)"?/i);
+      if (m?.[1]) filename = m[1];
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `juntos-export-${Date.now()}.json`;
+      link.download = filename;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -146,6 +164,71 @@ export const AuthModal: React.FC = () => {
       addToast('Exportação falhou', 'Erro de rede ao exportar os dados.');
     } finally {
       setExporting(false);
+    }
+  };
+
+  const loadSessions = async () => {
+    setLoadingSessions(true);
+    setSessionsError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/account/sessions`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        setSessionsError('Não foi possível carregar as sessões.');
+        return;
+      }
+      const data = await res.json();
+      setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+    } catch (e) {
+      console.error('[AuthModal] sessions load error', e);
+      setSessionsError('Erro de rede ao carregar as sessões.');
+    } finally {
+      setLoadingSessions(false);
+    }
+  };
+
+  const handleKillSession = async (session: any) => {
+    const targetId = session.fullId || session.id;
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/account/sessions/${encodeURIComponent(targetId)}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (res.status === 400) {
+        addToast('Não foi possível terminar', 'Não podes terminar a sessão atual.');
+        return;
+      }
+      if (!res.ok) {
+        addToast('Erro', 'Não foi possível terminar a sessão.');
+        return;
+      }
+      addToast('Sessão terminada', 'A sessão foi terminada com sucesso.');
+      await loadSessions();
+    } catch (e) {
+      console.error('[AuthModal] kill session error', e);
+      addToast('Erro', 'Erro de rede ao terminar a sessão.');
+    }
+  };
+
+  const handleKillAllOtherSessions = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/account/sessions`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        addToast('Erro', 'Não foi possível terminar as outras sessões.');
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      const count = typeof data.deleted === 'number' ? data.deleted : 0;
+      addToast('Sessões terminadas', count === 1 ? '1 sessão terminada.' : `${count} sessões terminadas.`);
+      await loadSessions();
+    } catch (e) {
+      console.error('[AuthModal] kill others error', e);
+      addToast('Erro', 'Erro de rede ao terminar as sessões.');
     }
   };
 
@@ -353,6 +436,80 @@ export const AuthModal: React.FC = () => {
               >
                 {exporting ? 'A preparar exportação...' : 'Exportar os meus dados'}
               </button>
+
+              <div className="pt-2 border-t border-surface-container-high flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !sessionsOpen;
+                    setSessionsOpen(next);
+                    if (next && sessions.length === 0 && !loadingSessions) {
+                      loadSessions();
+                    }
+                  }}
+                  className="text-xs text-on-surface-variant hover:text-primary font-semibold text-left flex items-center justify-between"
+                >
+                  <span>Sessões ativas</span>
+                  <span className="material-symbols-outlined text-[16px]">{sessionsOpen ? 'expand_less' : 'expand_more'}</span>
+                </button>
+                {sessionsOpen && (
+                  <div className="rounded-xl border border-surface-container-high bg-surface-container-low p-2.5 flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={loadSessions}
+                        disabled={loadingSessions}
+                        className="text-[11px] text-primary font-semibold disabled:opacity-60"
+                      >
+                        {loadingSessions ? 'A atualizar...' : 'Atualizar'}
+                      </button>
+                      {sessions.some((s) => !s.isCurrent) && (
+                        <button
+                          type="button"
+                          onClick={handleKillAllOtherSessions}
+                          className="text-[11px] text-error font-semibold"
+                        >
+                          Terminar todas as outras
+                        </button>
+                      )}
+                    </div>
+                    {sessionsError && <p className="text-[11px] text-error">{sessionsError}</p>}
+                    {sessions.length === 0 && !loadingSessions && !sessionsError && (
+                      <p className="text-[11px] text-on-surface-variant">Sem sessões ativas.</p>
+                    )}
+                    <div className="flex flex-col gap-1.5">
+                      {sessions.map((s, idx) => (
+                        <div
+                          key={s.fullId || s.id || idx}
+                          className="flex items-start justify-between gap-2 rounded-lg px-2 py-1.5"
+                        >
+                          <div className="flex flex-col min-w-0">
+                            <span className="text-[11px] text-on-surface font-semibold truncate">
+                              {s.userAgent ? s.userAgent.slice(0, 60) : 'Dispositivo desconhecido'}
+                            </span>
+                            <span className="text-[10px] text-on-surface-variant">
+                              {s.ipMasked ? `${s.ipMasked} · ` : ''}
+                              {s.createdAt ? new Date(s.createdAt).toLocaleString('pt-PT') : ''}
+                            </span>
+                            {s.isCurrent && (
+                              <span className="text-[10px] text-primary font-semibold">Sessão atual</span>
+                            )}
+                          </div>
+                          {!s.isCurrent && (
+                            <button
+                              type="button"
+                              onClick={() => handleKillSession(s)}
+                              className="text-[11px] text-error font-semibold whitespace-nowrap"
+                            >
+                              Terminar
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {confirmingDelete ? (
                 <div className="rounded-xl border border-error/40 bg-error/5 p-3 flex flex-col gap-2">

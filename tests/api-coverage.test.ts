@@ -34,6 +34,18 @@ function cookieOf(res: Response): string {
     .join('; ');
 }
 
+function getCookie(res: Response, name: string): string | null {
+  const cookies = res.headers.getSetCookie();
+  for (const part of cookies) {
+    const trimmed = part.trim();
+    if (trimmed.toLowerCase().startsWith(name.toLowerCase() + '=')) {
+      const val = trimmed.split(';')[0].split('=')[1];
+      return val || null;
+    }
+  }
+  return null;
+}
+
 function requerida(nome: string): string {
   const valor = process.env[nome];
   if (!valor) {
@@ -355,6 +367,63 @@ async function runApiCoverageSuite() {
     assert('13c. Export sem sessão → 401', noAuth.status === 401, `status ${noAuth.status}`);
   } catch (err: any) {
     assert('13. GET /api/auth/account/export devolve JSON com as chaves esperadas', false, err.message);
+  }
+
+  // RF-AUTH-13: gestão de sessões ativas
+  try {
+    const listRes = await fetch(`${BASE_URL}/api/auth/account/sessions`, { headers: { Cookie: parentCookie } });
+    const listData = await jsonOf(listRes);
+    const sessionsArr = Array.isArray(listData.sessions) ? listData.sessions : [];
+    const current = sessionsArr.find((s: any) => s.isCurrent);
+    assert(
+      '14. GET /api/auth/account/sessions lista sessões e marca a atual',
+      listRes.status === 200 && sessionsArr.length >= 1 && current,
+      `status ${listRes.status}, count ${sessionsArr.length}`
+    );
+
+    const noAuthList = await fetch(`${BASE_URL}/api/auth/account/sessions`);
+    assert('14b. Listar sessões sem sessão → 401', noAuthList.status === 401, `status ${noAuthList.status}`);
+
+    const fakeDel = await fetch(`${BASE_URL}/api/auth/account/sessions/naoexiste123456`, {
+      method: 'DELETE',
+      headers: { Cookie: parentCookie },
+    });
+    assert('14c. Terminar sessão inexistente → 404', fakeDel.status === 404, `status ${fakeDel.status}`);
+
+    const killCurrent = await fetch(`${BASE_URL}/api/auth/account/sessions/${encodeURIComponent(parentSessionId)}`, {
+      method: 'DELETE',
+      headers: { Cookie: parentCookie },
+    });
+    assert('14d. Terminar a própria sessão atual → 400', killCurrent.status === 400, `status ${killCurrent.status}`);
+
+    // Criar sessão extra para testar "terminar todas as outras"
+    const loginExtra = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: parentEmail, password: strongPw }),
+    });
+    assert('14e-pre. Login extra cria nova sessão', loginExtra.status === 200, `status ${loginExtra.status}`);
+    const extraCookie = getCookie(loginExtra, 'juntos_session');
+    const killOthers = await fetch(`${BASE_URL}/api/auth/account/sessions`, {
+      method: 'DELETE',
+      headers: { Cookie: parentCookie },
+    });
+    const killData = await jsonOf(killOthers);
+    assert(
+      '14e. DELETE /api/auth/account/sessions termina as outras e mantém a atual',
+      killOthers.status === 200 && typeof killData.deleted === 'number',
+      `status ${killOthers.status}, deleted ${killData.deleted}`
+    );
+    const listAfter = await fetch(`${BASE_URL}/api/auth/account/sessions`, { headers: { Cookie: parentCookie } });
+    const afterData = await jsonOf(listAfter);
+    const afterArr = Array.isArray(afterData.sessions) ? afterData.sessions : [];
+    assert(
+      '14f. Após terminar outras, resta apenas a sessão atual',
+      listAfter.status === 200 && afterArr.length === 1 && afterArr[0]?.isCurrent,
+      `count ${afterArr.length}`
+    );
+  } catch (err: any) {
+    assert('14. GET /api/auth/account/sessions lista sessões e marca a atual', false, err.message);
   }
 
   const fails = results.filter((r) => !r.passed);

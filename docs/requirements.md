@@ -38,7 +38,7 @@ Prova de execução: ver `docs/requirements-evidence.md` (FASE 3).
 | RF-AUTH-10 | Login OAuth Google | `GET /api/auth/oauth/google/start` redireciona para Google | Bloqueado | Backlog | `juntos-backend/src/routes/oauth.ts:43` (requer `GOOGLE_CLIENT_ID/SECRET`) |
 | RF-AUTH-11 | Login OAuth GitHub | `GET /api/auth/oauth/github/start` redireciona para GitHub | Bloqueado | Backlog | `oauth.ts:44` (requer `GITHUB_CLIENT_ID/SECRET`) |
 | RF-AUTH-12 | Provider social não configurado responde 503 | `.../oauth/x/start` sem credenciais → 503 | Implementado | MVP | teste 8b |
-| RF-AUTH-13 | Gestão de sessões ativas (UI) | Utilizador vê e termina as suas sessões | Ausente | Backlog | só existe `deleteUserSessions` interno |
+| RF-AUTH-13 | Gestão de sessões ativas (UI) | Utilizador vê e termina as suas sessões (listar/terminar/terminar outras) | Implementado | Backlog | `server.ts` `/api/auth/account/sessions*`, `juntos-backend/src/routes/auth.ts`, UI em `AuthModal.tsx`, testes 14-14f |
 | RF-AUTH-14 | Rate limit por conta (não só por IP) no login | Bloqueio por conta além do IP | Implementado | MVP | `recordFailedLogin` (conta) + `authLimiter` (IP); teste 7 |
 
 ---
@@ -186,9 +186,9 @@ Prova de execução: ver `docs/requirements-evidence.md` (FASE 3).
 
 | Estado | Quantidade |
 |---|---|
-| Implementado | 49 |
+| Implementado | 50 |
 | Parcial | 3 (RF-WEATHER-02, RF-RT-05, RF-OPS-03) |
-| Ausente | 4 (RF-AUTH-13, RF-SEC-07, RF-OPS-04/05/06, RF-PWA-01/02 → contagem por requisito) |
+| Ausente | 3 (RF-SEC-07, RF-OPS-04/05/06, RF-PWA-01/02 → contagem por requisito) |
 | Bloqueado | 2 (RF-AUTH-10, RF-AUTH-11) |
 
 > Nota: as contagens devem ser revalidadas na FASE 3 quando cada requisito tiver evidência de execução.

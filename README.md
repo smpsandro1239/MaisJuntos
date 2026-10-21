@@ -98,6 +98,7 @@ Ver [`.env.example`](.env.example). Variáveis principais:
   `<backend>/api/auth/oauth/<provider>/callback`. Sem chaves, o endpoint devolve
   503 (a app mostra um aviso).
 - **Contentor (Docker):** `docker build -t maisjuntos .` (multi-stage, Node 22).
+- **Sessões ativas:** gestão de sessões no modal de conta (ver/terminar/terminar outras), com paridade Express + Cloudflare Workers.
 
 ## Testes e qualidade
 

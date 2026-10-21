@@ -441,6 +441,90 @@ export async function deleteSession(client: Client, sessionId: string): Promise<
   });
 }
 
+// ---------------------------------------------------------------------------
+// Gestão de sessões ativas (RF-AUTH-13)
+// ---------------------------------------------------------------------------
+
+function maskIp(ip?: string | null): string | undefined {
+  if (!ip) return undefined;
+  // IPv4: máscara os últimos dois octetos
+  const v4 = ip.split('.');
+  if (v4.length === 4) {
+    return `${v4[0]}.${v4[1]}.***.***`;
+  }
+  // IPv6: máscara a partir do 4.º grupo
+  const v6 = ip.split(':').filter(Boolean);
+  if (v6.length >= 4) {
+    return `${v6.slice(0, 4).join(':')}::****`;
+  }
+  return '***.***.***.***';
+}
+
+export interface SessionInfo {
+  id: string;
+  userAgent?: string;
+  ipMasked?: string;
+  createdAt: string;
+  expiresAt: string;
+  isCurrent: boolean;
+}
+
+export async function listUserSessions(
+  client: Client,
+  userId: string,
+  currentSessionId?: string
+): Promise<SessionInfo[]> {
+  const now = new Date().toISOString();
+  const rs = await client.execute({
+    sql: `
+      SELECT id, user_agent, ip, created_at, expires_at
+      FROM sessions
+      WHERE user_id = ? AND expires_at > ?
+      ORDER BY created_at DESC
+    `,
+    args: [userId, now],
+  });
+  return rs.rows.map((row: any) => ({
+    id: String(row.id),
+    userAgent: row.user_agent ? String(row.user_agent) : undefined,
+    ipMasked: maskIp(row.ip ? String(row.ip) : undefined),
+    createdAt: String(row.created_at),
+    expiresAt: String(row.expires_at),
+    isCurrent: currentSessionId ? String(row.id) === currentSessionId : false,
+  }));
+}
+
+export async function deleteUserSession(
+  client: Client,
+  userId: string,
+  sessionId: string
+): Promise<'ok' | 'not_found' | 'current'> {
+  if (!sessionId) return 'not_found';
+  const check = await client.execute({
+    sql: 'SELECT id FROM sessions WHERE id = ? AND user_id = ? LIMIT 1',
+    args: [sessionId, userId],
+  });
+  if (!check.rows.length) return 'not_found';
+  await client.execute({
+    sql: 'DELETE FROM sessions WHERE id = ? AND user_id = ?',
+    args: [sessionId, userId],
+  });
+  return 'ok';
+}
+
+export async function deleteOtherUserSessions(
+  client: Client,
+  userId: string,
+  currentSessionId: string
+): Promise<number> {
+  if (!currentSessionId) return 0;
+  const rs = await client.execute({
+    sql: 'DELETE FROM sessions WHERE user_id = ? AND id != ?',
+    args: [userId, currentSessionId],
+  });
+  return (rs as any).rowsAffected ?? 0;
+}
+
 // Limpeza de contas de teste (emails começados por um dos prefixos indicados).
 // Usada apenas pelo hook de desenvolvimento; nunca em produção.
 export async function deleteTestUsers(client: Client, prefixes: string[]): Promise<number> {

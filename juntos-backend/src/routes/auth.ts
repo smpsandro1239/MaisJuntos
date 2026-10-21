@@ -27,6 +27,9 @@ import {
   resetFailedLogins,
   setUserPassword,
   verifyAndMaybeMigrate,
+  listUserSessions,
+  deleteUserSession,
+  deleteOtherUserSessions,
 } from '../db/auth';
 import { buildPasswordResetEmail, buildVerificationEmail, sendEmail } from '../services/email';
 import { signWsTicket } from '../wsTicket';
@@ -368,6 +371,48 @@ routes.get('/account/export', requireAuth, async (c) => {
   c.header('Content-Disposition', `attachment; filename="${filename}"`);
   c.header('Cache-Control', 'no-store');
   return c.body(JSON.stringify(exportPayload), 200);
+});
+
+// Sessões ativas (RF-AUTH-13)
+routes.get('/account/sessions', requireAuth, async (c) => {
+  const user = c.get('user') as User;
+  const cookie = c.req.header('Cookie') || '';
+  const match = cookie.match(/juntos_session=([^;]+)/);
+  const currentSessionId = match ? match[1] : undefined;
+  const db = getDb(c.env);
+  const sessions = await listUserSessions(db, user.id, currentSessionId);
+  return c.json({ sessions: sessions.map((s) => ({ ...s, id: s.id.slice(0, 8) + '…', fullId: s.id })) });
+});
+
+routes.delete('/account/sessions/:id', requireAuth, async (c) => {
+  const user = c.get('user') as User;
+  const cookie = c.req.header('Cookie') || '';
+  const m = cookie.match(/juntos_session=([^;]+)/);
+  const currentSessionId = m ? m[1] : undefined;
+  const targetId = c.req.param('id');
+  const db = getDb(c.env);
+  if (targetId.length > 8 && currentSessionId && targetId === currentSessionId) {
+    return c.json({ error: 'Não pode terminar a sessão atual.' }, 400);
+  }
+  const all = await db.execute({ sql: 'SELECT id FROM sessions WHERE user_id = ?', args: [user.id] });
+  const match = all.rows.find((r: any) => String(r.id) === targetId || String(r.id).startsWith(targetId));
+  if (!match) return c.json({ error: 'Sessão não encontrada.' }, 404);
+  if (currentSessionId && String(match.id) === currentSessionId) {
+    return c.json({ error: 'Não pode terminar a sessão atual.' }, 400);
+  }
+  await deleteSession(db, String(match.id));
+  return c.json({ success: true });
+});
+
+routes.delete('/account/sessions', requireAuth, async (c) => {
+  const user = c.get('user') as User;
+  const cookie = c.req.header('Cookie') || '';
+  const m = cookie.match(/juntos_session=([^;]+)/);
+  const currentSessionId = m ? m[1] : undefined;
+  if (!currentSessionId) return c.json({ error: 'Sessão atual indisponível.' }, 400);
+  const db = getDb(c.env);
+  const deleted = await deleteOtherUserSessions(db, user.id, currentSessionId);
+  return c.json({ success: true, deleted });
 });
 
 // DELETE /api/auth/account — Direito ao esquecimento (RGPD, art. 17.º)

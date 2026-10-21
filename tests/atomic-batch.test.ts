@@ -12,7 +12,10 @@
 // Usa os builders de SQL reais (poiUpsertStatement/reportUpsertStatement), pelo
 // que valida o próprio código de produção, não uma cópia.
 import { createClient } from '@libsql/client';
-import { poiUpsertStatement, reportUpsertStatement } from '../src/db/turso';
+// Importa os builders do módulo puro (sem cliente Turso) para correr no CI, onde
+// não há TURSO_DATABASE_URL/AUTH_TOKEN. `src/db/turso.ts` faria o guard de
+// arranque disparar no import.
+import { poiUpsertStatement, reportUpsertStatement } from '../src/db/statements';
 import { POI, CommunityReport } from '../src/types';
 
 interface TestResult {

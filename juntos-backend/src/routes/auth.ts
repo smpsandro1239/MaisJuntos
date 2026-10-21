@@ -11,7 +11,7 @@ import {
   requireAuth,
   setSessionCookie,
 } from '../security';
-import { getDb } from '../db/index';
+import { getAppState, getDb, setAppState } from '../db/index';
 import {
   consumeAuthToken,
   createAuthToken,
@@ -270,6 +270,104 @@ routes.post('/reset-password', rateLimit('AUTH_RATE_LIMITER'), async (c) => {
   await resetFailedLogins(db, userId);
 
   return c.json({ success: true, message: 'Palavra-passe redefinida com sucesso. Já pode iniciar sessão.' });
+});
+
+// GET /api/auth/account/export — Direito à portabilidade (RGPD, art. 20.º)
+// Devolve todos os dados pessoais do titular num único JSON descarregável.
+// NUNCA inclui password_hash nem o sessionId em claro. Os reportes são ligados
+// por reporterName (única coluna existente; paridade com a anonimização do
+// DELETE). O consentimento vive apenas em localStorage no browser — não há
+// registo de consentimentos no servidor, pelo que a chave é omitida.
+routes.get('/account/export', requireAuth, async (c) => {
+  const user = c.get('user') as User;
+  const db = getDb(c.env);
+
+  const favoritesRs = await db.execute({
+    sql: 'SELECT poiId, createdAt FROM user_favorites WHERE userId = ? ORDER BY createdAt ASC',
+    args: [user.id],
+  });
+  const favorites = favoritesRs.rows.map((r: any) => ({
+    poiId: String(r.poiId),
+    addedAt: String(r.createdAt || ''),
+  }));
+
+  const plansRs = await db.execute({
+    sql: 'SELECT id, title, plan_json, created_at, updated_at FROM family_plans WHERE user_id = ? ORDER BY updated_at DESC',
+    args: [user.id],
+  });
+  const plans = plansRs.rows.map((r: any) => ({
+    id: String(r.id),
+    title: String(r.title),
+    plan: JSON.parse(String(r.plan_json)),
+    createdAt: String(r.created_at),
+    updatedAt: String(r.updated_at),
+  }));
+
+  const reportsRs = await db.execute({
+    sql: 'SELECT id, poiId, poiName, issueType, issueLabel, description, status, createdAt, data FROM reports WHERE reporterName = ? ORDER BY createdAt DESC',
+    args: [user.name],
+  });
+  const reports = reportsRs.rows.map((r: any) => ({
+    id: String(r.id),
+    poiId: r.poiId ? String(r.poiId) : undefined,
+    poiName: r.poiName ? String(r.poiName) : undefined,
+    issueType: r.issueType ? String(r.issueType) : undefined,
+    issueLabel: r.issueLabel ? String(r.issueLabel) : undefined,
+    description: r.description ? String(r.description) : undefined,
+    status: r.status ? String(r.status) : undefined,
+    createdAt: r.createdAt ? String(r.createdAt) : undefined,
+    data: r.data ? JSON.parse(String(r.data)) : undefined,
+  }));
+
+  const userRow = await db.execute({
+    sql: 'SELECT created_at FROM users WHERE id = ? LIMIT 1',
+    args: [user.id],
+  });
+  const createdAt = userRow.rows.length ? String(userRow.rows[0].created_at) : '';
+
+  const generatedAt = new Date().toISOString();
+  const exportPayload = {
+    exportMetadata: {
+      format: 'juntos-account-export/v1',
+      generatedAt,
+      userId: user.id,
+      legalBasis: 'RGPD art. 20.º (portabilidade dos dados)',
+    },
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      avatar: user.avatar,
+      provider: user.provider,
+      emailVerified: Boolean(user.emailVerified),
+      trustScore: user.trustScore,
+      createdAt,
+    },
+    favorites,
+    plans,
+    reports,
+    // Nota: não existe tabela de consentimentos no servidor. O consentimento
+    // (banner de cookies) é guardado apenas em localStorage no browser do
+    // titular, pelo que não há dados a exportar aqui.
+    consents: [],
+  };
+
+  // Registo de auditoria da exportação (RGPD: rasto de acesso aos dados).
+  const auditLog = await getAppState<Array<Record<string, unknown>>>(db, 'rgpd_audit_log', []);
+  auditLog.unshift({
+    action: 'account_export',
+    userId: user.id,
+    email: user.email,
+    timestamp: generatedAt,
+  });
+  await setAppState(db, 'rgpd_audit_log', auditLog.slice(0, 100));
+
+  const filename = `juntos-export-${user.id}-${Date.now()}.json`;
+  c.header('Content-Type', 'application/json; charset=utf-8');
+  c.header('Content-Disposition', `attachment; filename="${filename}"`);
+  c.header('Cache-Control', 'no-store');
+  return c.body(JSON.stringify(exportPayload), 200);
 });
 
 // DELETE /api/auth/account — Direito ao esquecimento (RGPD, art. 17.º)

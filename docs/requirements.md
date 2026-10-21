@@ -50,7 +50,7 @@ Prova de execução: ver `docs/requirements-evidence.md` (FASE 3).
 | RF-RGPD-01 | Banner de consentimento de cookies | Primeira visita mostra banner; escolha persiste | Implementado | MVP | componente de consentimento em `src/components` |
 | RF-RGPD-02 | Página de Termos + Política de Privacidade | Rota acessível com conteúdo | Implementado | MVP | ecrã de privacidade |
 | RF-RGPD-03 | Direito ao esquecimento | `DELETE /api/auth/account` apaga conta e dados; `me` seguinte `null` | Implementado | MVP | `server.ts` delete account |
-| RF-RGPD-04 | Portabilidade / exportação de dados | Endpoint devolve todos os dados do utilizador em formato legível | Ausente | Backlog | grep `export`/`portab` sem resultado |
+| RF-RGPD-04 | Portabilidade / exportação de dados | Endpoint devolve todos os dados do utilizador em formato legível | Implementado | MVP | `GET /api/auth/account/export` (Express + Worker); UI em `AuthModal.tsx` |
 
 ---
 
@@ -186,9 +186,9 @@ Prova de execução: ver `docs/requirements-evidence.md` (FASE 3).
 
 | Estado | Quantidade |
 |---|---|
-| Implementado | 48 |
+| Implementado | 49 |
 | Parcial | 3 (RF-WEATHER-02, RF-RT-05, RF-OPS-03) |
-| Ausente | 5 (RF-RGPD-04, RF-AUTH-13, RF-SEC-07, RF-OPS-04/05/06, RF-PWA-01/02 → contagem por requisito) |
+| Ausente | 4 (RF-AUTH-13, RF-SEC-07, RF-OPS-04/05/06, RF-PWA-01/02 → contagem por requisito) |
 | Bloqueado | 2 (RF-AUTH-10, RF-AUTH-11) |
 
 > Nota: as contagens devem ser revalidadas na FASE 3 quando cada requisito tiver evidência de execução.

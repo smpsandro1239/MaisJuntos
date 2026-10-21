@@ -19,6 +19,7 @@ interface RealtimeContextType {
   connectedUsers: number;
   isWsConnected: boolean;
   toasts: ToastNotification[];
+  addToast: (title: string, message: string) => void;
   removeToast: (id: string) => void;
   verifyPoi: (poiId: string) => Promise<void>;
   updatePoi: (poi: POI) => Promise<void>;
@@ -346,6 +347,7 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         connectedUsers,
         isWsConnected,
         toasts,
+        addToast,
         removeToast,
         verifyPoi,
         updatePoi,

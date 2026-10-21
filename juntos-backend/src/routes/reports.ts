@@ -10,6 +10,8 @@ import {
   getReportPhoto,
   insertOrUpdatePoiInDb,
   insertOrUpdateReportInDb,
+  poiUpsertStatement,
+  reportUpsertStatement,
   insertReportPhoto,
   setAppState,
 } from '../db/index';
@@ -284,32 +286,43 @@ routes.post('/:id/approve', rateLimit('API_RATE_LIMITER'), requireRole(['admin',
   const now = new Date().toISOString();
   const approverName = user?.name || 'Administração';
   const newPoi = buildPoiFromProposal(report.proposedPlace, approverName, now);
-  await insertOrUpdatePoiInDb(db, newPoi);
-
   const updatedReport: CommunityReport = {
     ...report,
     status: 'resolved',
     linkedPoiId: newPoi.id,
   };
-  reports[index] = updatedReport;
-  await insertOrUpdateReportInDb(db, updatedReport);
 
-  // Registo de auditoria (alimenta as ações editoriais recentes do painel admin).
+  // Métricas atualizadas a par da transação.
   const metrics = await getAppState<OperationalMetrics>(db, 'metrics', { ...INITIAL_METRICS });
-  metrics.totalPois += 1;
-  metrics.criticalReportsCount = Math.max(0, metrics.criticalReportsCount - 1);
-  metrics.recentEditorialActions = [
+  const nextMetrics: OperationalMetrics = {
+    ...metrics,
+    totalPois: metrics.totalPois + 1,
+    criticalReportsCount: Math.max(0, metrics.criticalReportsCount - 1),
+    recentEditorialActions: [
+      {
+        id: `act-${Date.now()}`,
+        author: approverName,
+        poiName: newPoi.name,
+        timeAgo: 'Agora mesmo',
+        badge: 'Proposta aprovada',
+        color: 'primary',
+      },
+      ...(metrics.recentEditorialActions || []),
+    ].slice(0, 20),
+  };
+
+  // Transação atómica: POI + reporte + métricas numa única transação via
+  // `db.batch()` (libSQL). Uma falha a meio faz rollback total, evitando um POI
+  // órfão com o reporte ainda 'open'. Não se usam BEGIN/COMMIT separados
+  // porque o driver HTTP não os garante entre execute() distintos.
+  await db.batch([
+    poiUpsertStatement(newPoi),
+    reportUpsertStatement(updatedReport),
     {
-      id: `act-${Date.now()}`,
-      author: approverName,
-      poiName: newPoi.name,
-      timeAgo: 'Agora mesmo',
-      badge: 'Proposta aprovada',
-      color: 'primary',
+      sql: 'INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)',
+      args: ['metrics', JSON.stringify(nextMetrics)],
     },
-    ...(metrics.recentEditorialActions || []),
-  ].slice(0, 20);
-  await setAppState(db, 'metrics', metrics);
+  ]);
 
   await broadcast(c.env, { type: 'poi:create', data: newPoi });
   await broadcast(c.env, { type: 'report:update', data: updatedReport });

@@ -157,9 +157,12 @@ export async function getAllPoisFromDb(db: Client): Promise<POI[]> {
   });
 }
 
-export async function insertOrUpdatePoiInDb(db: Client, poi: POI): Promise<void> {
+// Constrói a instrução de upsert de um POI como objeto `{ sql, args }`, para
+// poder ser reutilizada tanto numa execução isolada como dentro de um
+// `db.batch([...])` atómico (ex.: aprovação de proposta comunal).
+export function poiUpsertStatement(poi: POI): { sql: string; args: (string | number)[] } {
   const poiData = JSON.stringify(poi);
-  await db.execute({
+  return {
     sql: `
       INSERT OR REPLACE INTO pois (
         id, code, name, slug, category, categoryLabel, shortDescription, fullDescription,
@@ -217,7 +220,11 @@ export async function insertOrUpdatePoiInDb(db: Client, poi: POI): Promise<void>
       poi.createdAt || new Date().toISOString(),
       poi.updatedAt || new Date().toISOString(),
     ],
-  });
+  };
+}
+
+export async function insertOrUpdatePoiInDb(db: Client, poi: POI): Promise<void> {
+  await db.execute(poiUpsertStatement(poi));
 }
 
 export async function deletePoiFromDb(db: Client, id: string): Promise<void> {
@@ -279,9 +286,11 @@ export async function getAllReportsFromDb(db: Client): Promise<CommunityReport[]
   });
 }
 
-export async function insertOrUpdateReportInDb(db: Client, report: CommunityReport): Promise<void> {
+// Constrói a instrução de upsert de um reporte como objeto `{ sql, args }`,
+// reutilizável em execução isolada ou dentro de um `db.batch([...])` atómico.
+export function reportUpsertStatement(report: CommunityReport): { sql: string; args: (string | number | null)[] } {
   const reportData = JSON.stringify(report);
-  await db.execute({
+  return {
     sql: `
       INSERT OR REPLACE INTO reports (
         id, code, poiId, poiName, issueType, issueLabel, description,
@@ -312,7 +321,11 @@ export async function insertOrUpdateReportInDb(db: Client, report: CommunityRepo
       reportData,
       report.createdAt || new Date().toISOString(),
     ],
-  });
+  };
+}
+
+export async function insertOrUpdateReportInDb(db: Client, report: CommunityReport): Promise<void> {
+  await db.execute(reportUpsertStatement(report));
 }
 
 // Comprovativo fotográfico de um reporte (migration 005). Guardado numa tabela

@@ -361,3 +361,42 @@ Backend em paridade obrigatória: Worker **e** Express.
 - `test-ws.mjs` movido para `test/`.
 - Express re-verificado com hashes PBKDF2 migrados: login parent/admin via
   Express → 200 (compatibilidade de rollback confirmada); `npm test` 16/16.
+
+## Ciclo 2026-10-21 — RF-RGPD-04 + atomicidade do approve + limpeza genai
+**(sem commit/push/deploy — aguarda revisão)**
+
+- **RF-RGPD-04 (portabilidade, RGPD art. 20.º) — IMPLEMENTADO.**
+  `GET /api/auth/account/export` em paridade Express (`server.ts`) + Worker
+  (`juntos-backend/src/routes/auth.ts`), ambos `requireAuth`. Devolve
+  `exportMetadata`, `user`, `favorites`, `plans`, `reports` (ligados por
+  `reporterName` — única coluna existente). **Nunca** `password_hash` nem
+  `sessionId` em claro; `Cache-Control: no-store` + `Content-Disposition:
+  attachment`. Auditoria em `app_state.rgpd_audit_log`. `consents: []` porque não
+  há tabela de consentimentos no servidor (vive em `localStorage`). UI: botão
+  «Exportar os meus dados» em `AuthModal.tsx` → `fetch` → `Blob` → download +
+  toast (nunca renderiza o JSON). Nova API `addToast` exposta em
+  `RealtimeContext`.
+- **Atomicidade do approve — CORRIGIDA.** `server.ts` e
+  `juntos-backend/src/routes/reports.ts` passaram a escrever POI + reporte +
+  métricas num **único `client.batch()` / `db.batch()`** (rollback total a meio;
+  sem POI órfão). Extraídos builders reutilizáveis `poiUpsertStatement` /
+  `reportUpsertStatement` em `src/db/turso.ts` + `juntos-backend/src/db/index.ts`.
+- **`@google/genai` removido** de `package.json` (0 imports confirmado) e
+  `metadata.json.majorCapabilities` esvaziado (capability fantasma eliminada).
+  `npm install` removeu 37 pacotes.
+- **Testes.** Novo `tests/atomic-batch.test.ts` (2/2, script `npm run test:atomic`)
+  prova o rollback com DB em memória e os builders reais. `tests/api-coverage.test.ts`
+  cresceu 22→**25/25** (casos 13/13b/13c do export). Gates: build 0 · tsc raiz 0 ·
+  worker tsc 0 · `npm test` 16/16 · test:auth 21/21 · test:api 25/25 · test:geo 8/8 ·
+  test:atomic 2/2 · worker `npm test` 7/7.
+- **Nota de risco (inalterado):** a validação browser em produção do RF-RGPD-04 e
+  RF-PROPOSE-05 continua pendente (exige OIDC fresco); ambos provados por API +
+  E2E local.
+- **Limitação da prova de atomicidade:** `test:atomic` prova o contrato do
+  `batch()` em `file::memory` (SQLite nativo); a atomicidade do approve em
+  produção (Turso remoto via HTTP) assenta no contrato documentado do libSQL —
+  não é validada contra a Turso em teste.
+- **Limitação conhecida do export:** liga reportes por `reporterName` (única
+  coluna existente). Dois utilizadores com o mesmo `name` misturam reportes.
+  Solução real: adicionar `reporter_id` numa migração futura. Documentado, não
+  bloqueante.

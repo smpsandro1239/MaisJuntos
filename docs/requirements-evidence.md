@@ -67,16 +67,18 @@ automatizado (ou saída de execução colada) que o exerça. Inferir do código
 | Comando | Cobertura | Resultado |
 |---|---|---|
 | `npm run lint` (`tsc --noEmit`) | tipos do frontend/Express | 0 erros |
-| `npm test` | utilitários (parse, geo, etc.) | 16/16 |
+| `npm test` | segurança (CSRF, WS, segredos, etc.) | 16/16 |
 | `npm run test:geo` | parsing de coordenadas/links | 8/8 |
+| `npm run test:atomic` | atomicidade do `batch` no approve | 2/2 |
 | `npm run test:auth` | fluxo de autenticação/RGPD (HTTP) | 21/21 |
-| `npm run test:api` | POI/favoritos/roteiros/reportes/weather (HTTP) | 13/13 |
+| `npm run test:api` | POI/favoritos/roteiros/reportes/weather/export (HTTP) | 25/25 |
 | `npm run build:e2e` | artefacto de teste `dist-e2e/` | OK |
-| `npm run test:e2e` | browser local (Playwright + `webServer`) | 3/3 |
+| `npm run test:e2e` | browser local (Playwright + `webServer`) | 4 passed, 2 skipped |
 | `E2E_STAGING=1 npx playwright test tests/e2e/staging.spec.ts` | protocolo contra o Worker | 2/2 |
 | `node tests/e2e/prod-validate.mjs` | **browser real contra produção** | 15/15 |
 | `npm run build` | build de produção (sem `ws://localhost`) | OK |
-| `(cd juntos-backend && npx tsc --noEmit)` | tipos do Worker | OK |
+| `(cd juntos-backend && npx tsc --noEmit)` | tipos do Worker | 0 erros |
+| `(cd juntos-backend && npm test)` | contrato HTTP do Worker (vitest) | 7/7 |
 
 ## Prova por grupo de requisitos
 
@@ -95,12 +97,27 @@ automatizado (ou saída de execução colada) que o exerça. Inferir do código
   `503 not_configured` (provado) mas o fluxo completo não é executável.
 - **RF-AUTH-13 (AUSENTE)**: UI de gestão de sessões ativas.
 
-### RF-RGPD — PASS (uma lacuna)
+### RF-RGPD — PASS
 
 - **RF-RGPD-03 (PASS)**: direito ao esquecimento pela UI — E2E local clica
   «Apagar a minha conta…» → `DELETE /api/auth/account` 200 → reload mostra
   visitante; igualmente em **produção** (`prod-validate.mjs`, 200) e staging.
-- **RF-RGPD-04 (AUSENTE)**: exportação de dados (portabilidade).
+- **RF-RGPD-04 (PASS)**: direito à portabilidade (RGPD art. 20.º) —
+  `GET /api/auth/account/export` (`requireAuth`, paridade Express `server.ts` +
+  Worker `juntos-backend/src/routes/auth.ts`). Devolve um JSON com
+  `exportMetadata` (formato, timestamp, base legal), `user` (id, nome, email,
+  papel, avatar, provider, emailVerified, trustScore, createdAt), `favorites`,
+  `plans` e `reports` (os submetidos pelo titular, ligados por `reporterName`).
+  **Nunca** inclui `password_hash` nem o `sessionId` em claro; `Cache-Control:
+  no-store` e `Content-Disposition: attachment`. Cada exportação é registada no
+  log de auditoria (`app_state.rgpd_audit_log`). UI: botão «Exportar os meus
+  dados» em `AuthModal.tsx` → `fetch` → `Blob` → download (nunca renderiza o JSON
+  no DOM) + toast. *Sem tabela de consentimentos no servidor (o consentimento do
+  banner vive em `localStorage` no browser), pelo que `consents` vai vazio —
+  documentado no próprio endpoint.*
+  - Prova API (`tests/api-coverage.test.ts`): **25/25 PASS** — casos 13 (200 +
+    chaves esperadas + email correto), 13b (corpo sem `password_hash` nem o
+    sessionId da sessão atual) e 13c (401 sem sessão).
 
 ### RF-POI / RF-REPORT / RF-PROPOSE — PASS
 
@@ -115,8 +132,12 @@ automatizado (ou saída de execução colada) que o exerça. Inferir do código
     (`status:'review'`, `verifiedSource:'Proposta comunitária aprovada'`), marca o
     reporte `resolved` com `linkedPoiId`, append a `metrics.recentEditorialActions`
     e broadcast `poi:create`+`report:update`.
-  - Prova API (`tests/api-coverage.test.ts`): 22/22 PASS — casos 7/7b–7g cobrem
+  - Prova API (`tests/api-coverage.test.ts`): 25/25 PASS — casos 7/7b–7g cobrem
     201/401/403/404/200/409 + POI em `GET /api/pois`.
+  - Atomicidade (`tests/atomic-batch.test.ts`, 2/2): o POI + reporte + métricas
+    são escritos num único `client.batch()`; uma falha a meio faz rollback total
+    (sem POI órfão com reporte aberto). Ver secção RF-RGPD-04 para o endpoint
+    novo; a mesma iteração endureceu esta rota.
   - Prova browser (`tests/e2e/local.spec.ts`, teste `RF-PROPOSE-05`): login admin na
     UI → backoffice → cartão da proposta → botão «Aprovar espaço» → `POST …/approve`
     200 → POI na API pública (`status:'review'`). Suite E2E local: 4 passed, 2 skipped.
@@ -176,9 +197,11 @@ automatizado (ou saída de execução colada) que o exerça. Inferir do código
 
 ## Lacunas e riscos abertos (MVP)
 
-1. **RF-RGPD-04** — exportação de dados pessoais. *Backlog legal.*
-2. **RF-AUTH-10/11** — OAuth bloqueado por credenciais. *Bloqueado externo.*
-3. **RF-PWA-01/02**, **RF-OPS-04/05/06** — operação/distribuição. *Backlog.*
+1. **RF-AUTH-10/11** — OAuth bloqueado por credenciais. *Bloqueado externo.*
+2. **RF-PWA-01/02**, **RF-OPS-04/05/06** — operação/distribuição. *Backlog.*
+3. **Validação browser em produção do RF-RGPD-04 e RF-PROPOSE-05** — provados
+   por API + E2E local; a confirmação em browser de produção
+   (`prod-validate.mjs`) fica pendente por exigir token OIDC fresco. *Backlog.*
 
 ## Notas de verificação (observações relevantes)
 

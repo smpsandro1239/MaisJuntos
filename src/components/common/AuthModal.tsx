@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useRealtime } from '../../context/RealtimeContext';
 import { PRIVACY_EVENT } from './CookieBanner';
 import { API_BASE } from '../../config';
 
@@ -60,10 +61,12 @@ export const AuthModal: React.FC = () => {
     setViewMode,
     viewMode,
   } = useAuth();
+  const { addToast } = useRealtime();
 
   const [loadingProvider, setLoadingProvider] = useState<'google' | 'github' | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -118,6 +121,31 @@ export const AuthModal: React.FC = () => {
     } finally {
       setDeleting(false);
       setConfirmingDelete(false);
+    }
+  };
+
+  const handleExportAccount = async () => {
+    setExporting(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/account/export`, { credentials: 'include' });
+      if (!res.ok) {
+        addToast('Exportação falhou', 'Não foi possível exportar os teus dados. Tenta novamente.');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `juntos-export-${Date.now()}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      addToast('Dados exportados', 'O teu ficheiro JSON foi descarregado (RGPD art. 20.º).');
+    } catch {
+      addToast('Exportação falhou', 'Erro de rede ao exportar os dados.');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -315,6 +343,15 @@ export const AuthModal: React.FC = () => {
                 className="text-xs text-primary font-semibold hover:underline text-left"
               >
                 Política de Privacidade e Termos
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportAccount}
+                disabled={exporting}
+                className="text-xs text-on-surface-variant hover:text-primary font-semibold text-left disabled:opacity-60"
+              >
+                {exporting ? 'A preparar exportação...' : 'Exportar os meus dados'}
               </button>
 
               {confirmingDelete ? (

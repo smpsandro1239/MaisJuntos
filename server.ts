@@ -18,6 +18,8 @@ import {
   deletePoiFromDb,
   getAllReportsFromDb,
   insertOrUpdateReportInDb,
+  poiUpsertStatement,
+  reportUpsertStatement,
   insertReportPhoto,
   getReportPhoto,
   getAppState,
@@ -755,6 +757,107 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res, next) => {
   }
 });
 
+// GET /api/auth/account/export — Direito à portabilidade (RGPD, art. 20.º)
+// Devolve todos os dados pessoais do titular num único JSON descarregável.
+// NUNCA inclui password_hash nem o sessionId em claro. Os reportes são ligados
+// por reporterName (única coluna existente; paridade com a anonimização do
+// DELETE). O consentimento vive apenas em localStorage no browser — não há
+// registo de consentimentos no servidor, pelo que a chave é omitida.
+app.get('/api/auth/account/export', requireAuth, async (req, res, next) => {
+  try {
+    const user = req.user as User;
+
+    const favoritesRs = await client.execute({
+      sql: 'SELECT poiId, createdAt FROM user_favorites WHERE userId = ? ORDER BY createdAt ASC',
+      args: [user.id],
+    });
+    const favorites = favoritesRs.rows.map((r: any) => ({
+      poiId: String(r.poiId),
+      addedAt: String(r.createdAt || ''),
+    }));
+
+    const plansRs = await client.execute({
+      sql: 'SELECT id, title, plan_json, created_at, updated_at FROM family_plans WHERE user_id = ? ORDER BY updated_at DESC',
+      args: [user.id],
+    });
+    const plans = plansRs.rows.map((r: any) => ({
+      id: String(r.id),
+      title: String(r.title),
+      plan: JSON.parse(String(r.plan_json)),
+      createdAt: String(r.created_at),
+      updatedAt: String(r.updated_at),
+    }));
+
+    const reportsRs = await client.execute({
+      sql: 'SELECT id, poiId, poiName, issueType, issueLabel, description, status, createdAt, data FROM reports WHERE reporterName = ? ORDER BY createdAt DESC',
+      args: [user.name],
+    });
+    const reports = reportsRs.rows.map((r: any) => ({
+      id: String(r.id),
+      poiId: r.poiId ? String(r.poiId) : undefined,
+      poiName: r.poiName ? String(r.poiName) : undefined,
+      issueType: r.issueType ? String(r.issueType) : undefined,
+      issueLabel: r.issueLabel ? String(r.issueLabel) : undefined,
+      description: r.description ? String(r.description) : undefined,
+      status: r.status ? String(r.status) : undefined,
+      createdAt: r.createdAt ? String(r.createdAt) : undefined,
+      data: r.data ? JSON.parse(String(r.data)) : undefined,
+    }));
+
+    const userRow = await client.execute({
+      sql: 'SELECT created_at FROM users WHERE id = ? LIMIT 1',
+      args: [user.id],
+    });
+    const createdAt = userRow.rows.length ? String(userRow.rows[0].created_at) : '';
+
+    const generatedAt = new Date().toISOString();
+    const exportPayload = {
+      exportMetadata: {
+        format: 'juntos-account-export/v1',
+        generatedAt,
+        userId: user.id,
+        legalBasis: 'RGPD art. 20.º (portabilidade dos dados)',
+      },
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        avatar: user.avatar,
+        provider: user.provider,
+        emailVerified: Boolean(user.emailVerified),
+        trustScore: user.trustScore,
+        createdAt,
+      },
+      favorites,
+      plans,
+      reports,
+      // Nota: não existe tabela de consentimentos no servidor. O consentimento
+      // (banner de cookies) é guardado apenas em localStorage no browser do
+      // titular, pelo que não há dados a exportar aqui.
+      consents: [],
+    };
+
+    // Registo de auditoria da exportação (RGPD: rasto de acesso aos dados).
+    const auditLog = await getAppState<Array<Record<string, unknown>>>('rgpd_audit_log', []);
+    auditLog.unshift({
+      action: 'account_export',
+      userId: user.id,
+      email: user.email,
+      timestamp: generatedAt,
+    });
+    await setAppState('rgpd_audit_log', auditLog.slice(0, 100));
+
+    const filename = `juntos-export-${user.id}-${Date.now()}.json`;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json(exportPayload);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE /api/auth/account — Direito ao esquecimento (RGPD, art. 17.º)
 app.delete('/api/auth/account', requireAuth, async (req, res, next) => {
   try {
@@ -1394,28 +1497,43 @@ app.post('/api/reports/:id/approve', adminLimiter, requireRole(['admin', 'curato
     const now = new Date().toISOString();
     const approverName = req.user?.name || 'Administração';
     const newPoi = buildPoiFromProposal(report.proposedPlace, approverName, now);
-    pois.unshift(newPoi);
-    await insertOrUpdatePoiInDb(newPoi);
-
     const updatedReport: CommunityReport = { ...report, status: 'resolved', linkedPoiId: newPoi.id };
-    reports[index] = updatedReport;
-    await insertOrUpdateReportInDb(updatedReport);
 
-    // Registo de auditoria (alimenta as ações editoriais recentes do painel admin).
-    metrics.totalPois += 1;
-    metrics.criticalReportsCount = Math.max(0, metrics.criticalReportsCount - 1);
-    metrics.recentEditorialActions = [
+    // Métricas atualizadas (a par da transação; só aplicadas à memória após o
+    // sucesso, para que uma falha não deixe estado divergente).
+    const nextMetrics: OperationalMetrics = {
+      ...metrics,
+      totalPois: metrics.totalPois + 1,
+      criticalReportsCount: Math.max(0, metrics.criticalReportsCount - 1),
+      recentEditorialActions: [
+        {
+          id: `act-${Date.now()}`,
+          author: approverName,
+          poiName: newPoi.name,
+          timeAgo: 'Agora mesmo',
+          badge: 'Proposta aprovada',
+          color: 'primary',
+        },
+        ...(metrics.recentEditorialActions || []),
+      ].slice(0, 20),
+    };
+
+    // Transação atómica: POI + reporte + métricas numa única transação via
+    // `client.batch()` (libSQL). Uma falha a meio faz rollback total, evitando
+    // um POI órfão com o reporte ainda 'open'.
+    await client.batch([
+      poiUpsertStatement(newPoi),
+      reportUpsertStatement(updatedReport),
       {
-        id: `act-${Date.now()}`,
-        author: approverName,
-        poiName: newPoi.name,
-        timeAgo: 'Agora mesmo',
-        badge: 'Proposta aprovada',
-        color: 'primary',
+        sql: 'INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)',
+        args: ['metrics', JSON.stringify(nextMetrics)],
       },
-      ...(metrics.recentEditorialActions || []),
-    ].slice(0, 20);
-    await setAppState('metrics', metrics);
+    ]);
+
+    // Só após o commit é que a memória é sincronizada e os clientes notificados.
+    pois.unshift(newPoi);
+    reports[index] = updatedReport;
+    Object.assign(metrics, nextMetrics);
 
     broadcast({ type: 'poi:create', data: newPoi });
     broadcast({ type: 'report:update', data: updatedReport });

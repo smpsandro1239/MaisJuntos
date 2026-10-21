@@ -153,9 +153,12 @@ export async function getAllPoisFromDb(): Promise<POI[]> {
   });
 }
 
-export async function insertOrUpdatePoiInDb(poi: POI): Promise<void> {
+// Constrói a instrução de upsert de um POI como objeto `{ sql, args }`, para
+// poder ser reutilizada tanto numa execução isolada como dentro de um
+// `client.batch([...])` atómico (ex.: aprovação de proposta comunal).
+export function poiUpsertStatement(poi: POI): { sql: string; args: (string | number)[] } {
   const poiData = JSON.stringify(poi);
-  await client.execute({
+  return {
     sql: `
       INSERT OR REPLACE INTO pois (
         id, code, name, slug, category, categoryLabel, shortDescription, fullDescription,
@@ -213,7 +216,11 @@ export async function insertOrUpdatePoiInDb(poi: POI): Promise<void> {
       poi.createdAt || new Date().toISOString(),
       poi.updatedAt || new Date().toISOString(),
     ],
-  });
+  };
+}
+
+export async function insertOrUpdatePoiInDb(poi: POI): Promise<void> {
+  await client.execute(poiUpsertStatement(poi));
 }
 
 export async function deletePoiFromDb(id: string): Promise<void> {
@@ -277,9 +284,11 @@ export async function getAllReportsFromDb(): Promise<CommunityReport[]> {
   });
 }
 
-export async function insertOrUpdateReportInDb(report: CommunityReport): Promise<void> {
+// Constrói a instrução de upsert de um reporte como objeto `{ sql, args }`,
+// reutilizável em execução isolada ou dentro de um `client.batch([...])` atómico.
+export function reportUpsertStatement(report: CommunityReport): { sql: string; args: (string | number | null)[] } {
   const reportData = JSON.stringify(report);
-  await client.execute({
+  return {
     sql: `
       INSERT OR REPLACE INTO reports (
         id, code, poiId, poiName, issueType, issueLabel, description,
@@ -310,7 +319,11 @@ export async function insertOrUpdateReportInDb(report: CommunityReport): Promise
       reportData,
       report.createdAt || new Date().toISOString(),
     ],
-  });
+  };
+}
+
+export async function insertOrUpdateReportInDb(report: CommunityReport): Promise<void> {
+  await client.execute(reportUpsertStatement(report));
 }
 
 // Comprovativo fotográfico de um reporte (migration 005). Guardado numa tabela

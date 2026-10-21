@@ -69,6 +69,7 @@ async function runApiCoverageSuite() {
   // Sessão parent efémera (limpa pelo hook de limpeza).
   const parentEmail = `fluxo.api.${stamp}@maisjuntos.pt`;
   let parentCookie = '';
+  let parentSessionId = '';
   try {
     const res = await fetch(`${BASE_URL}/api/auth/register`, {
       method: 'POST',
@@ -76,6 +77,7 @@ async function runApiCoverageSuite() {
       body: JSON.stringify({ email: parentEmail, password: strongPw, name: 'API Parent' }),
     });
     parentCookie = cookieOf(res);
+    parentSessionId = parentCookie.replace(/^.*juntos_session=/, '').split(';')[0];
     assert('0b. Sessão parent obtida', res.status === 201 && Boolean(parentCookie), `status ${res.status}`);
   } catch (err: any) {
     assert('0b. Sessão parent obtida', false, err.message);
@@ -324,6 +326,35 @@ async function runApiCoverageSuite() {
     assert('6b. Cidade não suportada → 400', bad.status === 400, `status ${bad.status}`);
   } catch (err: any) {
     assert('6. GET /api/weather devolve dados', false, err.message);
+  }
+
+  // RF-RGPD-04: direito à portabilidade (RGPD art. 20.º). GET autenticado
+  // devolve JSON com os dados do titular; 401 sem sessão; e o corpo NUNCA pode
+  // conter o hash da palavra-passe nem o sessionId em claro.
+  try {
+    const res = await fetch(`${BASE_URL}/api/auth/account/export`, { headers: { Cookie: parentCookie } });
+    const raw = await res.text();
+    const data = JSON.parse(raw);
+    const hasKeys =
+      data?.user && Array.isArray(data?.favorites) && Array.isArray(data?.plans) && Array.isArray(data?.reports);
+    assert(
+      '13. GET /api/auth/account/export devolve JSON com as chaves esperadas',
+      res.status === 200 && hasKeys && data.user.email === parentEmail,
+      `status ${res.status}, chaves ${Object.keys(data || {}).join(',')}`
+    );
+
+    const leaksPassword = raw.includes('password_hash') || raw.includes(String(strongPw));
+    const leaksSession = parentSessionId.length > 0 && raw.includes(parentSessionId);
+    assert(
+      '13b. Export NÃO contém password_hash nem o sessionId em claro',
+      !leaksPassword && !leaksSession,
+      `password_hash=${raw.includes('password_hash')} sessionId=${leaksSession}`
+    );
+
+    const noAuth = await fetch(`${BASE_URL}/api/auth/account/export`);
+    assert('13c. Export sem sessão → 401', noAuth.status === 401, `status ${noAuth.status}`);
+  } catch (err: any) {
+    assert('13. GET /api/auth/account/export devolve JSON com as chaves esperadas', false, err.message);
   }
 
   const fails = results.filter((r) => !r.passed);

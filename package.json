@@ -16,10 +16,10 @@
     "test:auth": "tsx tests/auth-flow.test.ts",
     "test:api": "tsx tests/api-coverage.test.ts",
     "test:geo": "tsx tests/parse-coords.test.ts",
+    "test:atomic": "tsx tests/atomic-batch.test.ts",
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@google/genai": "^2.4.0",
     "@libsql/client": "^0.18.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/bcryptjs": "^3.0.0",

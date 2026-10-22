@@ -540,7 +540,7 @@ export async function deleteUserSession(
   client: Client,
   userId: string,
   sessionId: string
-): Promise<'ok' | 'not_found'> {
+): Promise<'ok' | 'not_found' | 'current'> {
   if (!sessionId) return 'not_found';
   const check = await client.execute({
     sql: 'SELECT id FROM sessions WHERE id = ? AND user_id = ? LIMIT 1',

@@ -878,13 +878,9 @@ app.delete('/api/auth/account/sessions/:id', requireAuth, async (req, res, next)
     const user = req.user as User;
     const currentSessionId = (req as any).sessionId as string | undefined;
     const targetId = req.params.id;
-    // Impedir terminar a própria sessão
-    if (targetId.length > 8) {
-      if (currentSessionId && targetId === currentSessionId) {
-        return res.status(400).json({ error: 'Não pode terminar a sessão atual.' });
-      }
+    if (targetId.length > 8 && currentSessionId && targetId === currentSessionId) {
+      return res.status(400).json({ error: 'Não pode terminar a sessão atual.' });
     }
-    // Procurar sessão completa (o cliente pode enviar o id truncado)
     const all = await client.execute({
       sql: 'SELECT id FROM sessions WHERE user_id = ?',
       args: [user.id],
@@ -894,7 +890,8 @@ app.delete('/api/auth/account/sessions/:id', requireAuth, async (req, res, next)
     if (currentSessionId && String(match.id) === currentSessionId) {
       return res.status(400).json({ error: 'Não pode terminar a sessão atual.' });
     }
-    await deleteSession(client, String(match.id));
+    const result = await deleteUserSession(client, user.id, String(match.id));
+    if (result === 'not_found') return res.status(404).json({ error: 'Sessão não encontrada.' });
     res.json({ success: true });
   } catch (err) {
     next(err);

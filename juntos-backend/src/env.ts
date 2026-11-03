@@ -7,6 +7,9 @@ export interface Env {
   ALLOWED_ORIGINS: string;
   APP_URL?: string;
   NODE_ENV?: string;
+  // Liga o hook de limpeza de dados de teste (POST /api/dev/cleanup-test-data).
+  // Só tem efeito fora de produção, tal como no Express (server.ts).
+  ALLOW_TEST_HOOKS?: string;
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
   // Política de verificação de email (BLOCO 4 da revisão F5.7): 'true' exige

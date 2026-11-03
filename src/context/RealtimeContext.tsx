@@ -18,6 +18,7 @@ interface RealtimeContextType {
   familyPlan: FamilyPlan;
   connectedUsers: number;
   isWsConnected: boolean;
+  serverUnreachable: boolean;
   toasts: ToastNotification[];
   addToast: (title: string, message: string) => void;
   removeToast: (id: string) => void;
@@ -44,6 +45,7 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [familyPlan, setFamilyPlan] = useState<FamilyPlan>(INITIAL_FAMILY_PLAN);
   const [connectedUsers, setConnectedUsers] = useState<number>(1);
   const [isWsConnected, setIsWsConnected] = useState<boolean>(false);
+  const [serverUnreachable, setServerUnreachable] = useState<boolean>(false);
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -65,6 +67,20 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     let socket: WebSocket | undefined;
     let reconnectTimer: NodeJS.Timeout;
     let stopped = false;
+    // RF-RT-05: backoff exponencial 1s → 2s → 4s → 8s → 16s (cap), com reset
+    // em `onopen`. Evita martelar o servidor quando está indisponível.
+    let attempt = 0;
+    const RECONNECT_BASE_MS = 1000;
+    const RECONNECT_MAX_MS = 16000;
+
+    const scheduleReconnect = () => {
+      if (stopped) return;
+      const delay = Math.min(RECONNECT_BASE_MS * 2 ** attempt, RECONNECT_MAX_MS);
+      attempt += 1;
+      // Após 3 falhas seguidas (≈7s) assume-se servidor inalcançável.
+      if (attempt >= 3) setServerUnreachable(true);
+      reconnectTimer = setTimeout(connect, delay);
+    };
 
     async function connect() {
       if (stopped) return;
@@ -72,6 +88,7 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       // cookie). Não abrir socket evita um ciclo de reconexões a receber 401.
       if (!isLoggedIn) {
         setIsWsConnected(false);
+        setServerUnreachable(false);
         return;
       }
       // Autenticação do WebSocket: em produção o cookie de sessão vive no
@@ -101,6 +118,8 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         wsRef.current = socket;
 
         socket.onopen = () => {
+          attempt = 0;
+          setServerUnreachable(false);
           setIsWsConnected(true);
         };
 
@@ -146,14 +165,14 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
         socket.onclose = () => {
           setIsWsConnected(false);
-          if (!stopped) reconnectTimer = setTimeout(connect, 3000);
+          if (!stopped) scheduleReconnect();
         };
 
         socket.onerror = () => {
           socket?.close();
         };
       } catch {
-        if (!stopped) reconnectTimer = setTimeout(connect, 4000);
+        if (!stopped) scheduleReconnect();
       }
     }
 
@@ -346,6 +365,7 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         familyPlan,
         connectedUsers,
         isWsConnected,
+        serverUnreachable,
         toasts,
         addToast,
         removeToast,

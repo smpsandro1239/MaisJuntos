@@ -29,6 +29,14 @@ jobs:
       - name: Build de produção
         run: npm run build
 
+      - name: Sanidade do bundle (sem ws://localhost)
+        run: |
+          if grep -rq "ws://localhost" dist/assets/*.js; then
+            echo "ERRO: bundle de produção contém ws://localhost"
+            exit 1
+          fi
+          echo "OK: bundle de produção sem ws://localhost"
+
       - name: Testes de geo
         run: npm run test:geo
 

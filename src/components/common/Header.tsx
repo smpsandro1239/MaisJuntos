@@ -20,7 +20,7 @@ export const Header: React.FC<HeaderProps> = ({
   onBack,
 }) => {
   const { user, isDarkMode, toggleDarkMode, viewMode, setViewMode, setAuthModalOpen } = useAuth();
-  const { connectedUsers, isWsConnected } = useRealtime();
+  const { connectedUsers, isWsConnected, serverUnreachable } = useRealtime();
   const [cityDropdownOpen, setCityDropdownOpen] = useState(false);
 
   const cities = ['Braga, Centro', 'Porto, Baixa', 'Guimarães, Histórico', 'Famalicão, Centro'];
@@ -112,11 +112,19 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center gap-1.5">
           {/* WebSocket real-time badge */}
           <div
-            title={isWsConnected ? `Sincronização em tempo real ativa (${connectedUsers} utilizadores)` : 'A religar WebSocket...'}
+            title={
+              serverUnreachable
+                ? 'Servidor inalcançável — a tentar novamente com backoff'
+                : isWsConnected
+                  ? `Sincronização em tempo real ativa (${connectedUsers} utilizadores)`
+                  : 'A religar WebSocket...'
+            }
             className="hidden sm:flex items-center gap-1 px-2 py-1 rounded-full bg-surface-container-high text-xs text-on-surface-variant font-label-sm cursor-pointer"
           >
-            <span className={`w-2 h-2 rounded-full ${isWsConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
-            <span className="hidden md:inline font-mono">{connectedUsers} ao vivo</span>
+            <span className={`w-2 h-2 rounded-full ${serverUnreachable ? 'bg-red-500' : isWsConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
+            <span className="hidden md:inline font-mono">
+              {serverUnreachable ? 'offline' : `${connectedUsers} ao vivo`}
+            </span>
           </div>
 
           {/* Dark mode switch */}

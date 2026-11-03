@@ -59,7 +59,7 @@ import { POI } from './types';
 
 const AppContent: React.FC = () => {
   const { viewMode, setViewMode, phoneFrameMode, togglePhoneFrameMode, isDarkMode, toggleDarkMode, setAuthModalOpen } = useAuth();
-  const { pois, isWsConnected, connectedUsers } = useRealtime();
+  const { pois, isWsConnected, connectedUsers, serverUnreachable } = useRealtime();
 
   // Parent Navigation State
   const [parentTab, setParentTab] = useState<ParentTab>('explorar');
@@ -147,14 +147,22 @@ const AppContent: React.FC = () => {
         {/* Live WebSocket Status Dot */}
         <div
           className="flex items-center gap-1 px-2 py-1 rounded-full bg-surface-container text-[11px] font-mono text-on-surface-variant"
-          title={isWsConnected ? `WebSocket Ligado (${connectedUsers} conectados)` : 'A religar...'}
+          title={
+            serverUnreachable
+              ? 'Servidor inalcançável — a tentar novamente com backoff'
+              : isWsConnected
+                ? `WebSocket Ligado (${connectedUsers} conectados)`
+                : 'A religar...'
+          }
         >
           <span
             className={`w-2 h-2 rounded-full ${
-              isWsConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+              serverUnreachable ? 'bg-red-500' : isWsConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
             }`}
           />
-          <span className="hidden sm:inline">WS {isWsConnected ? 'OK' : 'OFF'}</span>
+          <span className="hidden sm:inline">
+            WS {serverUnreachable ? 'ERR' : isWsConnected ? 'OK' : 'OFF'}
+          </span>
         </div>
       </div>
 

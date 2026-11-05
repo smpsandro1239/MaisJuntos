@@ -324,6 +324,44 @@ export function reportUpsertStatement(report: CommunityReport): { sql: string; a
   };
 }
 
+// RF-PROPOSE-05 / P1.6: claim atómico de aprovação por reporte (espelho do
+// Express). O INSERT numa chave única de `app_state` faz a segunda transação
+// concorrente falhar com UNIQUE constraint, abortando o batch inteiro — incluindo
+// o POI que já tivesse sido inserido — e devolvendo 409.
+export function approveClaimStatement(
+  reportId: string,
+  poiId: string,
+  at: string
+): { sql: string; args: (string | number)[] } {
+  return {
+    sql: 'INSERT INTO app_state (key, value) VALUES (?, ?)',
+    args: [`report_approval:${reportId}`, JSON.stringify({ poiId, at })],
+  };
+}
+
+// RF-PROPOSE-05 / P1.6: UPDATE condicional do reporte (só resolve se ainda não
+// tiver `linkedPoiId` no JSON `data`). Paridade com o Express.
+export function reportResolveStatement(
+  reportId: string,
+  poiId: string
+): { sql: string; args: (string | number)[] } {
+  return {
+    sql: `
+      UPDATE reports
+      SET status = 'resolved',
+          data = json_set(
+            COALESCE(data, '{}'),
+            '$.status', 'resolved',
+            '$.linkedPoiId', ?
+          )
+      WHERE id = ?
+        AND (json_extract(data, '$.linkedPoiId') IS NULL
+             OR json_extract(data, '$.linkedPoiId') = '')
+    `,
+    args: [poiId, reportId],
+  };
+}
+
 export async function insertOrUpdateReportInDb(db: Client, report: CommunityReport): Promise<void> {
   await db.execute(reportUpsertStatement(report));
 }

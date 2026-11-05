@@ -15,7 +15,12 @@ import { createClient } from '@libsql/client';
 // Importa os builders do módulo puro (sem cliente Turso) para correr no CI, onde
 // não há TURSO_DATABASE_URL/AUTH_TOKEN. `src/db/turso.ts` faria o guard de
 // arranque disparar no import.
-import { poiUpsertStatement, reportUpsertStatement } from '../src/db/statements';
+import {
+  poiUpsertStatement,
+  reportUpsertStatement,
+  approveClaimStatement,
+  reportResolveStatement,
+} from '../src/db/statements';
 import { POI, CommunityReport } from '../src/types';
 
 interface TestResult {
@@ -129,6 +134,60 @@ async function run() {
     );
   } catch (err: any) {
     assert('A2. Falha a meio → rollback total (sem POI órfão, reporte ausente)', false, err.message);
+  }
+
+  // Caso 3 (P1.6): duas aprovações concorrentes do mesmo reporte. O claim
+  // atómico em `app_state` faz exatamente uma transação ganhar; a outra viola a
+  // chave única e o batch é revertido por inteiro (sem segundo POI).
+  try {
+    const reportId = 'rep-corrida-teste';
+    const original = {
+      id: reportId,
+      issueType: 'new_place',
+      status: 'open',
+      proposedPlace: { name: 'Corrida', category: 'parque', address: 'Rua X', city: 'Braga' },
+    } as unknown as CommunityReport;
+    await db.execute(reportUpsertStatement(original));
+
+    const approveBatch = (poiId: string) => {
+      const poi = fakePoi();
+      poi.id = poiId;
+      return db.batch([
+        approveClaimStatement(reportId, poiId, new Date().toISOString()),
+        poiUpsertStatement(poi),
+        reportResolveStatement(reportId, poiId),
+        {
+          sql: 'INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)',
+          args: ['metrics', JSON.stringify({ totalPois: 1, criticalReportsCount: 0, recentEditorialActions: [] })],
+        },
+      ]);
+    };
+
+    const settled = await Promise.allSettled([approveBatch('poi-corrida-a'), approveBatch('poi-corrida-b')]);
+    const oks = settled.filter((s) => s.status === 'fulfilled').length;
+    const erros = settled.filter((s) => s.status === 'rejected').length;
+    assert(
+      'A3. Aprovações concorrentes do mesmo reporte → 1 sucesso + 1 falha',
+      oks === 1 && erros === 1,
+      `sucessos=${oks} falhas=${erros}`
+    );
+
+    const repRows = await db.execute({ sql: 'SELECT data FROM reports WHERE id = ?', args: [reportId] });
+    const repData = repRows.rows.length ? JSON.parse(String(repRows.rows[0].data)) : {};
+    const poiRows = await db.execute({
+      sql: "SELECT id FROM pois WHERE id IN ('poi-corrida-a', 'poi-corrida-b')",
+      args: [],
+    });
+    const unicoPoi = poiRows.rows.length === 1 ? String(poiRows.rows[0].id) : '';
+    assert(
+      'A4. Após a falha, só o POI vencedor existe e o reporte aponta para ele',
+      poiRows.rows.length === 1 &&
+        repData.linkedPoiId === unicoPoi &&
+        repData.status === 'resolved',
+      `pois=${poiRows.rows.length} linkedPoiId=${repData.linkedPoiId} status=${repData.status}`
+    );
+  } catch (err: any) {
+    assert('A3. Aprovações concorrentes do mesmo reporte → 1 sucesso + 1 falha', false, err.message);
   }
 
   const fails = results.filter((r) => !r.passed);

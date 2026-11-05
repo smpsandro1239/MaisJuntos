@@ -108,3 +108,48 @@ export function reportUpsertStatement(report: CommunityReport): { sql: string; a
     ],
   };
 }
+
+// RF-PROPOSE-05 / P1.6: claim atómico de aprovação por reporte.
+//
+// A rota de approve fazia o check de `linkedPoiId` fora da transação, pelo que
+// duas aprovações concorrentes do mesmo reporte criavam dois POIs. O batch passa
+// a começar por este INSERT: a chave é única em `app_state`, logo a segunda
+// transação viola a constraint e o motor faz ROLLBACK total (incluindo o POI que
+// já tivesse sido inserido no mesmo batch).
+export function approveClaimStatement(
+  reportId: string,
+  poiId: string,
+  at: string
+): { sql: string; args: (string | number)[] } {
+  return {
+    sql: 'INSERT INTO app_state (key, value) VALUES (?, ?)',
+    args: [`report_approval:${reportId}`, JSON.stringify({ poiId, at })],
+  };
+}
+
+// RF-PROPOSE-05 / P1.6: UPDATE condicional do reporte.
+//
+// Só resolve o reporte se ainda não existir `linkedPoiId` no JSON `data`. Como
+// não há coluna dedicada, usa-se `json_extract`/`json_set` (suportado pelo
+// SQLite/libSQL e pelo D1). Corre no mesmo batch que o INSERT do POI; o claim
+// acima garante que o UPDATE afeta exatamente uma linha.
+export function reportResolveStatement(
+  reportId: string,
+  poiId: string
+): { sql: string; args: (string | number)[] } {
+  return {
+    sql: `
+      UPDATE reports
+      SET status = 'resolved',
+          data = json_set(
+            COALESCE(data, '{}'),
+            '$.status', 'resolved',
+            '$.linkedPoiId', ?
+          )
+      WHERE id = ?
+        AND (json_extract(data, '$.linkedPoiId') IS NULL
+             OR json_extract(data, '$.linkedPoiId') = '')
+    `,
+    args: [poiId, reportId],
+  };
+}

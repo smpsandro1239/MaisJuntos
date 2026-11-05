@@ -20,6 +20,8 @@ import {
   insertOrUpdateReportInDb,
   poiUpsertStatement,
   reportUpsertStatement,
+  approveClaimStatement,
+  reportResolveStatement,
   insertReportPhoto,
   getReportPhoto,
   getAppState,
@@ -1640,17 +1642,28 @@ app.post('/api/reports/:id/approve', adminLimiter, requireRole(['admin', 'curato
       ].slice(0, 20),
     };
 
-    // Transação atómica: POI + reporte + métricas numa única transação via
-    // `client.batch()` (libSQL). Uma falha a meio faz rollback total, evitando
-    // um POI órfão com o reporte ainda 'open'.
-    await client.batch([
-      poiUpsertStatement(newPoi),
-      reportUpsertStatement(updatedReport),
-      {
-        sql: 'INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)',
-        args: ['metrics', JSON.stringify(nextMetrics)],
-      },
-    ]);
+    // Transação atómica: claim + POI + UPDATE condicional do reporte + métricas.
+    // O claim é a primeira instrução: se outra aprovação concorrente já o
+    // gravou, o INSERT viola a chave única de `app_state` e o motor faz rollback
+    // total (nenhum POI órfão). O UPDATE condicional reforça que o reporte só é
+    // resolvido se `linkedPoiId` ainda estiver vazio.
+    try {
+      await client.batch([
+        approveClaimStatement(report.id, newPoi.id, now),
+        poiUpsertStatement(newPoi),
+        reportResolveStatement(report.id, newPoi.id),
+        {
+          sql: 'INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)',
+          args: ['metrics', JSON.stringify(nextMetrics)],
+        },
+      ]);
+    } catch (batchErr) {
+      const message = batchErr instanceof Error ? batchErr.message : String(batchErr);
+      if (/UNIQUE constraint failed/i.test(message) && message.includes('app_state')) {
+        return res.status(409).json({ error: 'Esta proposta já foi aprovada.' });
+      }
+      throw batchErr;
+    }
 
     // Só após o commit é que a memória é sincronizada e os clientes notificados.
     pois.unshift(newPoi);

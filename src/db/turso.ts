@@ -7,7 +7,12 @@ import { seedInitialSecurityUsers } from './authDb';
 import { poiUpsertStatement, reportUpsertStatement } from './statements';
 
 // Re-export para manter os consumidores existentes (server.ts) inalterados.
-export { poiUpsertStatement, reportUpsertStatement } from './statements';
+export {
+  poiUpsertStatement,
+  reportUpsertStatement,
+  approveClaimStatement,
+  reportResolveStatement,
+} from './statements';
 
 // Verificação estrita das variáveis de ambiente sem credenciais hardcoded
 const databaseUrl = process.env.TURSO_DATABASE_URL;

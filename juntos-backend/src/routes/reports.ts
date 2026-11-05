@@ -12,6 +12,8 @@ import {
   insertOrUpdateReportInDb,
   poiUpsertStatement,
   reportUpsertStatement,
+  approveClaimStatement,
+  reportResolveStatement,
   insertReportPhoto,
   setAppState,
 } from '../db/index';
@@ -311,18 +313,28 @@ routes.post('/:id/approve', rateLimit('API_RATE_LIMITER'), requireRole(['admin',
     ].slice(0, 20),
   };
 
-  // Transação atómica: POI + reporte + métricas numa única transação via
-  // `db.batch()` (libSQL). Uma falha a meio faz rollback total, evitando um POI
-  // órfão com o reporte ainda 'open'. Não se usam BEGIN/COMMIT separados
-  // porque o driver HTTP não os garante entre execute() distintos.
-  await db.batch([
-    poiUpsertStatement(newPoi),
-    reportUpsertStatement(updatedReport),
-    {
-      sql: 'INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)',
-      args: ['metrics', JSON.stringify(nextMetrics)],
-    },
-  ]);
+  // Transação atómica: claim + POI + UPDATE condicional + métricas. O claim é a
+  // primeira instrução; numa segunda aprovação concorrente o INSERT viola a
+  // chave única de `app_state` e o D1 faz rollback do batch inteiro (sem POI
+  // órfão). O UPDATE condicional só resolve o reporte se `linkedPoiId` estiver
+  // vazio, reforçando a idempotência.
+  try {
+    await db.batch([
+      approveClaimStatement(report.id, newPoi.id, now),
+      poiUpsertStatement(newPoi),
+      reportResolveStatement(report.id, newPoi.id),
+      {
+        sql: 'INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)',
+        args: ['metrics', JSON.stringify(nextMetrics)],
+      },
+    ]);
+  } catch (batchErr) {
+    const message = batchErr instanceof Error ? batchErr.message : String(batchErr);
+    if (/UNIQUE constraint failed/i.test(message) && message.includes('app_state')) {
+      return c.json({ error: 'Esta proposta já foi aprovada.' }, 409);
+    }
+    throw batchErr;
+  }
 
   await broadcast(c.env, { type: 'poi:create', data: newPoi });
   await broadcast(c.env, { type: 'report:update', data: updatedReport });

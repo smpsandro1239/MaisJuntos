@@ -105,9 +105,9 @@ Prova de execução: ver `docs/requirements-evidence.md` (FASE 3).
 
 | ID | Requisito | Critério de aceitação | Estado | Prio | Evidência |
 |---|---|---|---|---|---|
-| RF-MAP-01 | Mapa Leaflet com marcadores reais | Marcadores posicionados por lat/lng da BD | Implementado | MVP | `react-leaflet` + OSM |
-| RF-MAP-02 | GPS do utilizador e centrar | Botão usa `navigator.geolocation` e recentra | Implementado | MVP | UI |
-| RF-MAP-03 | Distâncias Haversine nos cartões | Distância real por cartão | Implementado | MVP | `calculateDistanceKm` |
+| RF-MAP-01 | Mapa Leaflet com marcadores reais | Marcadores posicionados por lat/lng da BD | Implementado | MVP | E2E RF-MAP-01 (marcador → pré-visualização → detalhe) |
+| RF-MAP-02 | GPS do utilizador e centrar | Botão usa `navigator.geolocation` e recentra | Implementado | MVP | E2E RF-MAP-02 (centragem na 1.ª correção + recentrar) |
+| RF-MAP-03 | Distâncias Haversine nos cartões | Distância real por cartão | Implementado | MVP | E2E RF-MAP-03 (distância GPS vs. Haversine) |
 | RF-WEATHER-01 | Open-Meteo por cidade com cache | 200 com dados; cache 15 min | Implementado | MVP | `/api/weather` |
 | RF-WEATHER-02 | Cache partilhado multi-instância (Worker) | Cache sobrevive a instâncias diferentes | Parcial | Backlog | validar persistência no Worker |
 
@@ -129,13 +129,13 @@ Prova de execução: ver `docs/requirements-evidence.md` (FASE 3).
 
 | ID | Requisito | Critério de aceitação | Estado | Prio | Evidência |
 |---|---|---|---|---|---|
-| RF-ADMIN-01 | Dashboard com métricas | Ecrã com KPIs | Implementado | MVP | `src/components/admin` |
-| RF-ADMIN-02 | Curadoria de POIs | Aprovar/editar POIs | Implementado | MVP | `ApprovePOIScreen` |
-| RF-ADMIN-03 | Gestão de denúncias | Resolver/rejeitar reportes | Implementado | MVP | admin reports |
-| RF-ADMIN-04 | Editor de POI com preview mobile | Formulário + preview | Implementado | MVP | `POIEditor` |
-| RF-ADMIN-05 | Gestão de categorias | Criar/editar categorias | Implementado | MVP | admin categories |
-| RF-ADMIN-06 | Importação CSV | Upload e importação | Implementado | MVP | `ImportCSV` |
-| RF-ADMIN-07 | Registo de auditoria (UI) | Lista de ações administrativas | Implementado | Backlog | `AdminAudit.tsx` |
+| RF-ADMIN-01 | Dashboard com métricas | Ecrã com KPIs | Implementado | MVP | E2E RF-ADMIN-01 |
+| RF-ADMIN-02 | Curadoria de POIs | Aprovar/editar POIs | Implementado | MVP | E2E RF-ADMIN-02 |
+| RF-ADMIN-03 | Gestão de denúncias | Resolver/rejeitar reportes | Implementado | MVP | E2E RF-ADMIN-03 |
+| RF-ADMIN-04 | Editor de POI com preview mobile | Formulário + preview | Implementado | MVP | E2E RF-ADMIN-04 |
+| RF-ADMIN-05 | Gestão de categorias | Criar/editar categorias | Implementado | MVP | E2E RF-ADMIN-05 |
+| RF-ADMIN-06 | Importação CSV | Upload e importação | Implementado | MVP | E2E RF-ADMIN-06 (input file real) |
+| RF-ADMIN-07 | Registo de auditoria (UI) | Lista de ações administrativas | Implementado | Backlog | E2E RF-ADMIN-07 |
 
 ---
 

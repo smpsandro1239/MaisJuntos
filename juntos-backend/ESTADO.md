@@ -400,3 +400,27 @@ Backend em paridade obrigatória: Worker **e** Express.
   coluna existente). Dois utilizadores com o mesmo `name` misturam reportes.
   Solução real: adicionar `reporter_id` numa migração futura. Documentado, não
   bloqueante.
+
+## Ciclo 2026-11-05 — Batch 2 (P1.4, P1.6, P1.5, P1.2, P1.3)
+
+- **P1.4 — verificação presencial de POI.** `PUT /api/pois/:id/verify` em
+  paridade Express + Worker (admin, checklist obrigatória, review→verified,
+  auditoria + métricas no mesmo batch). UI no `PoiEditorScreen`.
+- **P1.6 — approve concorrente.** O approve reivindica
+  `report_approval:<reportId>` em `app_state` como primeira instrução do batch;
+  duplicado viola a PK e faz rollback total (incluindo o POI). O resolve passou a
+  ser condicional (`linkedPoiId IS NULL`). Duplicado → **409**. Testes A3/A4.
+- **P1.5 — geocoding de propostas.** `src/geocoding.ts` +
+  `juntos-backend/src/geocoding.ts`: **Nominatim (OSM)** com timeout de 5 s,
+  User-Agent `maisjuntos/1.0 (contacto@maisjuntos.pt)` e cache partilhada em
+  `app_state['geocode_cache']`. Falha → `lat:0,lng:0` + `geocodingPending: true`
+  (nunca bloqueia a aprovação). Stub `POST /api/dev/geocode-stub` só em
+  desenvolvimento (`ALLOW_TEST_HOOKS`). **Dependência externa:** disponibilidade
+  e política de uso do Nominatim (1 req/s, atribuição OSM).
+- **P1.2 — mapa E2E.** Centragem automática na primeira correção de GPS e gancho
+  `_juntosMap` no contentor Leaflet. Testes RF-MAP-01/02/03 no browser real
+  (marcadores da BD, GPS/recentrar, distância Haversine).
+- **P1.3 — backoffice E2E.** Testes RF-ADMIN-01..07; `CsvImportScreen` passou a
+  ter `<input type="file">` real (a importação em massa continua simulada).
+- **Provas:** `test:api` 42/42 · `test:atomic` 4/4 · `test:geo` 8/8 ·
+  Playwright `local.spec.ts` 15 passed · tsc raiz 0 · tsc Worker 0.

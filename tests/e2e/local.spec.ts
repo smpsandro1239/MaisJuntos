@@ -298,3 +298,87 @@ test('RF-MAP-03: cartões mostram a distância Haversine real com GPS', async ({
     .poll(async () => (await card.innerText()).includes(`(${expected} km)`), { timeout: 15_000 })
     .toBe(true);
 });
+
+// ---------------------------------------------------------------------------
+// RF-ADMIN-01..07: backoffice real (login admin, navegação e ecrãs).
+// ---------------------------------------------------------------------------
+test.describe('RF-ADMIN: backoffice', () => {
+  const adminPw = process.env.ADMIN_PASSWORD;
+
+  test.beforeEach(async ({ page }) => {
+    test.skip(!adminPw, 'ADMIN_PASSWORD ausente no ambiente.');
+    await page.goto('/');
+    const accept = page.getByRole('button', { name: 'Aceitar' });
+    if (await accept.isVisible().catch(() => false)) await accept.click();
+    await openProfile(page);
+    await page.getByPlaceholder('Email').fill('admin@maisjuntos.pt');
+    await page.getByPlaceholder('Palavra-passe').fill(adminPw!);
+    await page.getByRole('button', { name: 'Entrar', exact: true }).click();
+    await expect(page.locator('[title^="Sincronização em tempo real ativa"]')).toBeVisible({ timeout: 20_000 });
+    await page.getByTitle('Alternar entre a App dos Pais e o Backoffice').click();
+    await expect(page.getByText('Dashboard Geral', { exact: true })).toBeVisible({ timeout: 15_000 });
+  });
+
+  test('RF-ADMIN-01: dashboard mostra métricas reais de POIs', async ({ page }) => {
+    await expect(page.getByRole('heading', { name: 'Visão Operacional & Integridade de Dados' })).toBeVisible();
+    await expect(page.getByText('Ativos Validados', { exact: true })).toBeVisible();
+    await expect(page.getByText('Total POIs familiares ativos no app')).toBeVisible();
+
+    // O KPI não é um placeholder: reflete os POIs existentes na BD.
+    await expect
+      .poll(async () => {
+        const raw = await page.locator('span.font-headline-xl').first().innerText();
+        return Number(raw.replace(/\D/g, ''));
+      }, { timeout: 15_000 })
+      .toBeGreaterThan(0);
+  });
+
+  test('RF-ADMIN-02: curadoria lista os POIs da BD', async ({ page }) => {
+    await page.getByText('Curadoria de POIs', { exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Curadoria & Validação de POIs' })).toBeVisible();
+    await expect
+      .poll(() => page.locator('table tbody tr').count(), { timeout: 15_000 })
+      .toBeGreaterThan(0);
+  });
+
+  test('RF-ADMIN-03: gestão de denúncias e reportes', async ({ page }) => {
+    await page.getByText('Denúncias & Reportes', { exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Gestão de Denúncias e Reportes' })).toBeVisible();
+  });
+
+  test('RF-ADMIN-04: editor de POI abre a ficha e regressa à curadoria', async ({ page }) => {
+    await page.getByText('Curadoria de POIs', { exact: true }).click();
+    await page.locator('[title="Editar ficha completa"]').first().click();
+    await expect(page.getByRole('heading', { name: /Editar Ponto de Interesse \(POI\)/ })).toBeVisible();
+    await expect(page.getByText('1. Identificação & Categorização')).toBeVisible();
+
+    await page.getByText('Curadoria de POIs', { exact: true }).last().click();
+    await expect(page.getByRole('heading', { name: 'Curadoria & Validação de POIs' })).toBeVisible();
+  });
+
+  test('RF-ADMIN-05: gestão de categorias familiares', async ({ page }) => {
+    await page.getByText('Gestão de Categorias', { exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Gestão de Categorias Familiares' })).toBeVisible();
+    await expect(page.getByText(/^Categorias Ativas \(\d+\)$/)).toBeVisible();
+    await expect(page.getByPlaceholder('Ex: Teatros & Marionetas')).toBeVisible();
+  });
+
+  test('RF-ADMIN-06: importação CSV aceita um ficheiro real', async ({ page }) => {
+    await page.getByText('Importação CSV', { exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Importação em Lote (CSV / GeoJSON)' })).toBeVisible();
+
+    await page.locator('[data-testid="csv-file-input"]').setInputFiles({
+      name: 'pois-braga.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from('Nome,Morada,Concelho,Latitude,Longitude\nMuseu dos Biscainhos,Rua dos Biscainhos,Braga,41.55,-8.43\n', 'utf8'),
+    });
+    await expect(page.locator('[data-testid="csv-file-name"]')).toContainText('pois-braga.csv');
+  });
+
+  test('RF-ADMIN-07: auditoria e logs do sistema', async ({ page }) => {
+    await page.getByText('Auditoria & Logs', { exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Auditoria & Logs do Sistema' })).toBeVisible();
+    await expect(page.getByText('Últimos Eventos de Integridade')).toBeVisible();
+  });
+});
+

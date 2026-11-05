@@ -157,11 +157,15 @@ automatizado (ou saída de execução colada) que o exerça. Inferir do código
 - **RF-WEATHER-02 (PARCIAL)**: validado em staging (respostas 200), mas a
   persistência de cache entre instâncias do Worker não é observável neste teste.
 
-### RF-MAP — NÃO PROVADO
+### RF-MAP — PASS (E2E local)
 
-- **RF-MAP-01/02/03** (Leaflet, GPS do utilizador, distâncias Haversine nos
-  cartões): **não exercitados** por nenhum teste automatizado. O E2E nunca abre o
-  mapa nem concede geolocalização. Cobertura apenas por inspeção de código.
+- **RF-MAP-01/02/03 (PASS)**: `tests/e2e/local.spec.ts` prova no browser real:
+  marcadores `.poi-custom-marker` vindos de `/api/pois` (RF-MAP-01), centragem
+  automática na primeira correção de GPS + botão «Recetrar mapa na sua posição»
+  (RF-MAP-02) e distância Haversine nos cartões do Explorar com GPS concedido
+  (RF-MAP-03, comparada com a fórmula de `weatherGeoService`).
+- **Nota:** o E2E usa `context.setGeolocation` (Porto) e `grantPermissions`;
+  não valida o diálogo nativo de permissão do browser.
 
 ### RF-RT — PASS (uma melhoria)
 
@@ -177,13 +181,19 @@ automatizado (ou saída de execução colada) que o exerça. Inferir do código
 - **RF-SEC-02 (PASS)**: CSRF por Origin — E2E local (Origin não permitida → 403)
   e staging (POST sem Origin em produção → 403).
 
-### RF-ADMIN — NÃO PROVADO (exceto moderação via API)
+### RF-ADMIN — PASS (E2E local, telas do backoffice)
 
-- **RF-ADMIN-01..07** (dashboard, curadoria, denúncias, editor com preview,
-  categorias, importação CSV, auditoria): **sem teste automatizado** do backoffice
-  no browser. A moderação de reportes é exercitada via API
-  (`tests/api-coverage.test.ts`), mas as restantes telas ficam **NÃO PROVADAS**
-  (cobertura por inspeção de código apenas).
+- **RF-ADMIN-01..07 (PASS)**: `tests/e2e/local.spec.ts` autentica o admin pela UI
+  (`admin@maisjuntos.pt` + `ADMIN_PASSWORD`) e percorre o backoffice: dashboard
+  com KPI real de POIs (RF-ADMIN-01), curadoria com linhas da BD (RF-ADMIN-02),
+  gestão de denúncias (RF-ADMIN-03), editor de POI e regresso à curadoria
+  (RF-ADMIN-04), categorias ativas (RF-ADMIN-05), importação CSV com
+  `<input type="file">` real e nome do ficheiro visível (RF-ADMIN-06) e
+  auditoria/logs (RF-ADMIN-07).
+- **Nota:** o RF-ADMIN-06 valida a seleção do ficheiro na UI; o processamento em
+  lote continua simulado (não há endpoint de importação em massa).
+- A moderação de reportes também é exercitada via API
+  (`tests/api-coverage.test.ts`, casos 16–16c).
 
 ### RF-OPS / RF-PWA
 

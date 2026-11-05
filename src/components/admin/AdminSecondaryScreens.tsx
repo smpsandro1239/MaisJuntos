@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useRealtime } from '../../context/RealtimeContext';
 import { useAuth } from '../../context/AuthContext';
 
@@ -91,6 +91,16 @@ export const CategoriesScreen: React.FC = () => {
 export const CsvImportScreen: React.FC = () => {
   const [importing, setImporting] = useState(false);
   const [importedCount, setImportedCount] = useState<number | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // RF-ADMIN-06: seleção real de ficheiro (o processamento em lote continua a
+  // ser simulado nesta UI; o ficheiro escolhido é registado e mostrado).
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    setFileName(file ? file.name : null);
+    setImportedCount(null);
+  };
 
   const handleSimulateImport = () => {
     setImporting(true);
@@ -118,7 +128,23 @@ export const CsvImportScreen: React.FC = () => {
           Colunas suportadas: Nome, Morada, Concelho, Latitude, Longitude, Preço, Idades, Carrinho_Bebé, Fraldário.
         </p>
 
-        <div className="mt-5 flex items-center gap-3">
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+          <input
+            ref={fileInputRef}
+            id="csv-file-input"
+            data-testid="csv-file-input"
+            type="file"
+            accept=".csv,.geojson,text/csv,application/geo+json"
+            className="sr-only"
+            onChange={handleFileChange}
+          />
+          <label
+            htmlFor="csv-file-input"
+            className="px-5 py-2.5 rounded-xl bg-surface-container hover:bg-surface-container-high text-on-surface font-bold text-xs transition-colors flex items-center gap-2 cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[18px]">attach_file</span>
+            <span>{fileName ? 'Trocar Ficheiro' : 'Selecionar Ficheiro'}</span>
+          </label>
           <button
             onClick={handleSimulateImport}
             disabled={importing}
@@ -134,6 +160,16 @@ export const CsvImportScreen: React.FC = () => {
             Descarregar Modelo CSV
           </button>
         </div>
+
+        {fileName && (
+          <p
+            data-testid="csv-file-name"
+            className="mt-4 px-3 py-2 rounded-xl bg-surface-container text-on-surface text-xs font-semibold flex items-center gap-2"
+          >
+            <span className="material-symbols-outlined text-[16px] text-primary">description</span>
+            <span>Ficheiro selecionado: {fileName}</span>
+          </p>
+        )}
 
         {importedCount && (
           <div className="mt-4 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-300 text-xs font-semibold flex items-center gap-2">

@@ -10,6 +10,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
+import { geocodeAddress, normalizeGeocodeKey, type GeocodeCoords } from './src/geocoding';
 
 import {
   initDatabase,
@@ -1149,6 +1150,54 @@ app.get('/api/auth/oauth/:provider/callback', async (req, res) => {
 // pelos testes (`fluxo.`, `esc.`, `semmaiuscula.`, `bf.`, `naoexiste.`) e os
 // POIs de teste, evitando poluição da base de dados partilhada.
 const TEST_EMAIL_PREFIXES = ['fluxo.', 'esc.', 'semmaiuscula.', 'bf.', 'naoexiste.'];
+// RF-PROPOSE-06 / P1.5: geocoding de propostas sem coordenadas, com cache em
+// `app_state['geocode_cache']`. O stub só existe em desenvolvimento e é ativado
+// por `/api/dev/geocode-stub` (mesmo gate do hook de limpeza), permitindo testar
+// os caminhos de sucesso/falha/cache sem depender do Nominatim em CI.
+const GEOCODE_CACHE_KEY = 'geocode_cache';
+const geocodeStub: { mode: 'live' | 'ok' | 'fail'; latitude: number; longitude: number } = {
+  mode: 'live',
+  latitude: 0,
+  longitude: 0,
+};
+
+async function geocodeWithCache(address: string, city: string): Promise<GeocodeCoords | null> {
+  const key = normalizeGeocodeKey(address, city);
+  const cache = await getAppState<Record<string, GeocodeCoords>>(GEOCODE_CACHE_KEY, {});
+  if (cache[key]) return cache[key];
+
+  let coords: GeocodeCoords | null = null;
+  if (geocodeStub.mode === 'ok') {
+    coords = { latitude: geocodeStub.latitude, longitude: geocodeStub.longitude };
+  } else if (geocodeStub.mode === 'fail') {
+    coords = null;
+  } else {
+    coords = await geocodeAddress(address, city);
+  }
+
+  if (coords) {
+    cache[key] = coords;
+    await setAppState(GEOCODE_CACHE_KEY, cache);
+  }
+  return coords;
+}
+
+app.post('/api/dev/geocode-stub', (req, res) => {
+  if (isProd || process.env.ALLOW_TEST_HOOKS !== 'true') {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  const mode = req.body?.mode;
+  if (mode !== 'live' && mode !== 'ok' && mode !== 'fail') {
+    return res.status(400).json({ error: "mode deve ser 'live', 'ok' ou 'fail'." });
+  }
+  geocodeStub.mode = mode;
+  if (mode === 'ok') {
+    geocodeStub.latitude = Number(req.body?.latitude);
+    geocodeStub.longitude = Number(req.body?.longitude);
+  }
+  return res.json({ success: true, mode: geocodeStub.mode });
+});
+
 app.post('/api/dev/cleanup-test-data', async (_req, res, next) => {
   try {
     if (isProd || process.env.ALLOW_TEST_HOOKS !== 'true') {
@@ -1172,6 +1221,15 @@ app.post('/api/dev/cleanup-test-data', async (_req, res, next) => {
         !String(r.reporterName || '').startsWith('[teste]') &&
         !String(r.proposedPlace?.name || '').startsWith('[teste]')
     );
+    // A cache de geocoding guarda chaves "morada|cidade" normalizadas; remove as
+    // entradas criadas pela suíte para não deixar lixo na BD partilhada.
+    const geocodeCache = await getAppState<Record<string, GeocodeCoords>>(GEOCODE_CACHE_KEY, {});
+    const cacheLimpa = Object.fromEntries(
+      Object.entries(geocodeCache).filter(([key]) => !key.includes('[teste]'))
+    );
+    if (Object.keys(cacheLimpa).length !== Object.keys(geocodeCache).length) {
+      await setAppState(GEOCODE_CACHE_KEY, cacheLimpa);
+    }
     return res.json({ success: true, usersDeleted, poisDeleted: testPois.length });
   } catch (err) {
     next(err);
@@ -1548,7 +1606,17 @@ app.put('/api/reports/:id', adminLimiter, requireRole(['admin', 'curator']), asy
 // Constrói a ficha POI a partir da proposta comunitária aprovada (RF-PROPOSE-05).
 // Espelho do Worker (juntos-backend/src/routes/reports.ts). O estado fica em
 // 'review' (revisão editorial) até auditoria física.
-function buildPoiFromProposal(proposal: ProposedPlace, approverName: string, now: string): POI {
+function buildPoiFromProposal(
+  proposal: ProposedPlace,
+  approverName: string,
+  now: string,
+  geo?: GeocodeCoords | null
+): POI {
+  const hasProposalCoords =
+    typeof proposal.latitude === 'number' && typeof proposal.longitude === 'number';
+  const latitude = hasProposalCoords ? (proposal.latitude as number) : (geo?.latitude ?? 0);
+  const longitude = hasProposalCoords ? (proposal.longitude as number) : (geo?.longitude ?? 0);
+  const geocodingPending = !hasProposalCoords && !geo;
   return {
     id: `poi-${Date.now()}`,
     code: `#POI-${Date.now().toString().slice(-4)}`,
@@ -1569,8 +1637,8 @@ function buildPoiFromProposal(proposal: ProposedPlace, approverName: string, now
     city: proposal.city || 'Braga',
     address: proposal.address || 'Braga, Portugal',
     postalCode: '',
-    latitude: proposal.latitude ?? 41.55,
-    longitude: proposal.longitude ?? -8.42,
+    latitude,
+    longitude,
     minAge: proposal.minAge ?? 0,
     maxAge: proposal.maxAge ?? 12,
     ageRecommendation: 'Todas as idades',
@@ -1588,6 +1656,7 @@ function buildPoiFromProposal(proposal: ProposedPlace, approverName: string, now
     verifiedAgoDays: 0,
     verifiedSource: 'Proposta comunitária aprovada',
     verifiedBy: approverName,
+    ...(geocodingPending ? { geocodingPending: true } : {}),
     dataQualityScore: 50,
     status: 'review',
     bookingPolicy: 'none',
@@ -1620,7 +1689,16 @@ app.post('/api/reports/:id/approve', adminLimiter, requireRole(['admin', 'curato
 
     const now = new Date().toISOString();
     const approverName = req.user?.name || 'Administração';
-    const newPoi = buildPoiFromProposal(report.proposedPlace, approverName, now);
+    const proposal = report.proposedPlace;
+
+    // RF-PROPOSE-06 / P1.5: sem coordenadas na proposta, tenta geocoding (cache
+    // primeiro). A falha não bloqueia a aprovação: o POI fica pendente.
+    const hasCoords =
+      typeof proposal.latitude === 'number' && typeof proposal.longitude === 'number';
+    const geocodeAttempted = !hasCoords;
+    const geo = geocodeAttempted ? await geocodeWithCache(proposal.address, proposal.city) : null;
+
+    const newPoi = buildPoiFromProposal(proposal, approverName, now, geo);
     const updatedReport: CommunityReport = { ...report, status: 'resolved', linkedPoiId: newPoi.id };
 
     // Métricas atualizadas (a par da transação; só aplicadas à memória após o
@@ -1630,6 +1708,18 @@ app.post('/api/reports/:id/approve', adminLimiter, requireRole(['admin', 'curato
       totalPois: metrics.totalPois + 1,
       criticalReportsCount: Math.max(0, metrics.criticalReportsCount - 1),
       recentEditorialActions: [
+        ...(geocodeAttempted
+          ? [
+              {
+                id: `act-geo-${Date.now()}`,
+                author: approverName,
+                poiName: newPoi.name,
+                timeAgo: 'Agora mesmo',
+                badge: geo ? 'Geocoding resolvido' : 'Geocoding pendente',
+                color: geo ? 'primary' : 'secondary',
+              },
+            ]
+          : []),
         {
           id: `act-${Date.now()}`,
           author: approverName,

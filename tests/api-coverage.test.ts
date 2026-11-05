@@ -284,6 +284,94 @@ async function runApiCoverageSuite() {
     assert('7. POST /api/reports (new_place) cria proposta (201)', false, err.message);
   }
 
+  // RF-PROPOSE-06: geocoding de propostas sem coordenadas (Nominatim + cache).
+  // O stub dev-only permite provar os três caminhos sem depender da rede:
+  //  16  — sucesso do geocoder → lat/lng válidos no POI;
+  //  16b — falha do geocoder → 200 com `geocodingPending` e lat/lng 0;
+  //  16c — mesma morada do caso 16 com o stub em 'fail' → usa cache (não faz fetch).
+  const geoPoiIds: string[] = [];
+  try {
+    const stub = (mode: 'live' | 'ok' | 'fail', latitude?: number, longitude?: number) =>
+      fetch(`${BASE_URL}/api/dev/geocode-stub`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode, latitude, longitude }),
+      });
+
+    const submitProposal = async (name: string, address: string, city: string) => {
+      const res = await fetch(`${BASE_URL}/api/reports`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          issueType: 'new_place',
+          issueLabel: 'Novo espaço',
+          reporterName: `[teste] API Geocode ${stamp}`,
+          comment: 'probe de geocoding',
+          proposedPlace: { name: `[teste] ${name} ${stamp}`, category: 'parque', address, city },
+        }),
+      });
+      return jsonOf(res);
+    };
+
+    const approveProposal = async (id: string) => {
+      const res = await fetch(`${BASE_URL}/api/reports/${id}/approve`, {
+        method: 'POST',
+        headers: { Cookie: adminCookie },
+      });
+      return { status: res.status, body: await jsonOf(res) };
+    };
+
+    const cacheAddress = '[teste] Rua do Geocoding 1';
+
+    await stub('ok', 41.1501, -8.6109);
+    const r16 = await submitProposal('Geo OK', cacheAddress, 'Braga');
+    const a16 = await approveProposal(r16.id);
+    if (a16.body?.poi?.id) geoPoiIds.push(a16.body.poi.id);
+    assert(
+      '16. Aprovar proposta sem coords → POI com lat/lng válidos',
+      a16.status === 200 &&
+        a16.body?.poi?.latitude === 41.1501 &&
+        a16.body?.poi?.longitude === -8.6109 &&
+        !a16.body?.poi?.geocodingPending,
+      `status ${a16.status}, lat ${a16.body?.poi?.latitude}, lng ${a16.body?.poi?.longitude}`
+    );
+
+    await stub('fail');
+    const r16b = await submitProposal('Geo Fail', '[teste] Rua Sem Geocoding 2', 'Braga');
+    const a16b = await approveProposal(r16b.id);
+    if (a16b.body?.poi?.id) geoPoiIds.push(a16b.body.poi.id);
+    assert(
+      '16b. Geocoding indisponível → 200 e POI com geocodingPending',
+      a16b.status === 200 &&
+        a16b.body?.poi?.geocodingPending === true &&
+        a16b.body?.poi?.latitude === 0 &&
+        a16b.body?.poi?.longitude === 0,
+      `status ${a16b.status}, pending ${a16b.body?.poi?.geocodingPending}, lat ${a16b.body?.poi?.latitude}`
+    );
+
+    // Stub continua em 'fail': se houvesse fetch, o POI ficaria pendente. Como a
+    // morada já está em cache, deve resolver com as coordenadas de 16.
+    const r16c = await submitProposal('Geo Cache', cacheAddress, 'Braga');
+    const a16c = await approveProposal(r16c.id);
+    if (a16c.body?.poi?.id) geoPoiIds.push(a16c.body.poi.id);
+    assert(
+      '16c. Mesma morada usa cache (sem novo fetch) → lat/lng de 16',
+      a16c.status === 200 &&
+        a16c.body?.poi?.latitude === 41.1501 &&
+        a16c.body?.poi?.longitude === -8.6109 &&
+        !a16c.body?.poi?.geocodingPending,
+      `status ${a16c.status}, lat ${a16c.body?.poi?.latitude}, pending ${a16c.body?.poi?.geocodingPending}`
+    );
+
+    await stub('live');
+  } catch (err: any) {
+    assert('16. Aprovar proposta sem coords → POI com lat/lng válidos', false, err.message);
+  } finally {
+    for (const id of geoPoiIds) {
+      await fetch(`${BASE_URL}/api/pois/${id}`, { method: 'DELETE', headers: { Cookie: adminCookie } });
+    }
+  }
+
   // BLOCO 1.1: limite anti-spam de submissão de reportes (5/min por IP).
   try {
     let last = 0;

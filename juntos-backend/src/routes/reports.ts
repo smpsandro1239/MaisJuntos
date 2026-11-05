@@ -20,6 +20,7 @@ import {
 import { broadcast } from '../broadcast';
 import type { CommunityReport, OperationalMetrics, POI, ProposedPlace } from '../types';
 import { INITIAL_METRICS } from '../data/mockData';
+import { geocodeAddress, normalizeGeocodeKey, type GeocodeCoords } from '../geocoding';
 
 const REPORT_ISSUE_TYPES = [
   'price_changed',
@@ -211,8 +212,14 @@ routes.put('/:id', rateLimit('API_RATE_LIMITER'), requireRole(['admin', 'curator
 function buildPoiFromProposal(
   proposal: ProposedPlace,
   approverName: string,
-  now: string
+  now: string,
+  geo?: GeocodeCoords | null
 ): POI {
+  const hasProposalCoords =
+    typeof proposal.latitude === 'number' && typeof proposal.longitude === 'number';
+  const latitude = hasProposalCoords ? (proposal.latitude as number) : (geo?.latitude ?? 0);
+  const longitude = hasProposalCoords ? (proposal.longitude as number) : (geo?.longitude ?? 0);
+  const geocodingPending = !hasProposalCoords && !geo;
   return {
     id: `poi-${Date.now()}`,
     code: `#POI-${Date.now().toString().slice(-4)}`,
@@ -233,8 +240,8 @@ function buildPoiFromProposal(
     city: proposal.city || 'Braga',
     address: proposal.address || 'Braga, Portugal',
     postalCode: '',
-    latitude: proposal.latitude ?? 41.55,
-    longitude: proposal.longitude ?? -8.42,
+    latitude,
+    longitude,
     minAge: proposal.minAge ?? 0,
     maxAge: proposal.maxAge ?? 12,
     ageRecommendation: 'Todas as idades',
@@ -252,6 +259,7 @@ function buildPoiFromProposal(
     verifiedAgoDays: 0,
     verifiedSource: 'Proposta comunitária aprovada',
     verifiedBy: approverName,
+    ...(geocodingPending ? { geocodingPending: true } : {}),
     dataQualityScore: 50,
     status: 'review',
     bookingPolicy: 'none',
@@ -261,6 +269,28 @@ function buildPoiFromProposal(
     createdAt: now,
     updatedAt: now,
   };
+}
+
+// RF-PROPOSE-06 / P1.5: geocoding com cache em `app_state['geocode_cache']`.
+// Espelho do Express, sem stub (em produção usa sempre o Nominatim, ver
+// ../geocoding.ts).
+const GEOCODE_CACHE_KEY = 'geocode_cache';
+
+async function geocodeWithCache(
+  db: ReturnType<typeof getDb>,
+  address: string,
+  city: string
+): Promise<GeocodeCoords | null> {
+  const key = normalizeGeocodeKey(address, city);
+  const cache = await getAppState<Record<string, GeocodeCoords>>(db, GEOCODE_CACHE_KEY, {});
+  if (cache[key]) return cache[key];
+
+  const coords = await geocodeAddress(address, city);
+  if (coords) {
+    cache[key] = coords;
+    await setAppState(db, GEOCODE_CACHE_KEY, cache);
+  }
+  return coords;
 }
 
 // POST /api/reports/:id/approve (Restrito a 'admin' e 'curator') — RF-PROPOSE-05
@@ -287,7 +317,16 @@ routes.post('/:id/approve', rateLimit('API_RATE_LIMITER'), requireRole(['admin',
 
   const now = new Date().toISOString();
   const approverName = user?.name || 'Administração';
-  const newPoi = buildPoiFromProposal(report.proposedPlace, approverName, now);
+  const proposal = report.proposedPlace;
+
+  // RF-PROPOSE-06 / P1.5: sem coordenadas na proposta, tenta geocoding (cache
+  // primeiro). A falha não bloqueia a aprovação: o POI fica pendente.
+  const hasCoords =
+    typeof proposal.latitude === 'number' && typeof proposal.longitude === 'number';
+  const geocodeAttempted = !hasCoords;
+  const geo = geocodeAttempted ? await geocodeWithCache(db, proposal.address, proposal.city) : null;
+
+  const newPoi = buildPoiFromProposal(proposal, approverName, now, geo);
   const updatedReport: CommunityReport = {
     ...report,
     status: 'resolved',
@@ -301,6 +340,18 @@ routes.post('/:id/approve', rateLimit('API_RATE_LIMITER'), requireRole(['admin',
     totalPois: metrics.totalPois + 1,
     criticalReportsCount: Math.max(0, metrics.criticalReportsCount - 1),
     recentEditorialActions: [
+      ...(geocodeAttempted
+        ? [
+            {
+              id: `act-geo-${Date.now()}`,
+              author: approverName,
+              poiName: newPoi.name,
+              timeAgo: 'Agora mesmo',
+              badge: geo ? 'Geocoding resolvido' : 'Geocoding pendente',
+              color: geo ? 'primary' : 'secondary',
+            },
+          ]
+        : []),
       {
         id: `act-${Date.now()}`,
         author: approverName,

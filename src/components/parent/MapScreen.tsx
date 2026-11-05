@@ -23,6 +23,9 @@ export const MapScreen: React.FC<MapScreenProps> = ({ onSelectPoi, onSwitchToLis
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
+  // Só centra no GPS na primeira localização, para não "puxar" o mapa de volta
+  // sempre que a posição é atualizada.
+  const hasCenteredOnUserRef = useRef(false);
 
   // Selected POI object
   const selectedPoi = useMemo(() => {
@@ -94,7 +97,16 @@ export const MapScreen: React.FC<MapScreenProps> = ({ onSelectPoi, onSwitchToLis
     markersLayerRef.current = markersGroup;
     mapInstanceRef.current = map;
 
+    // Gancho de teste (E2E): expõe a instância para validar centragem/GPS. Não
+    // é usado pela aplicação; desaparece quando o componente é desmontado.
+    if (mapContainerRef.current) {
+      (mapContainerRef.current as unknown as { _juntosMap?: L.Map })._juntosMap = map;
+    }
+
     return () => {
+      if (mapContainerRef.current) {
+        delete (mapContainerRef.current as unknown as { _juntosMap?: L.Map })._juntosMap;
+      }
       map.remove();
       mapInstanceRef.current = null;
     };
@@ -126,6 +138,12 @@ export const MapScreen: React.FC<MapScreenProps> = ({ onSelectPoi, onSwitchToLis
         marker.addTo(map);
         marker.bindTooltip('A sua localização', { direction: 'top', offset: [0, -12] });
         userMarkerRef.current = marker;
+      }
+
+      // Primeira correção de GPS: centra o mapa na família, uma única vez.
+      if (!hasCenteredOnUserRef.current) {
+        hasCenteredOnUserRef.current = true;
+        map.flyTo([userLocation.lat, userLocation.lng], 14, { duration: 0.6 });
       }
     }
   }, [userLocation]);

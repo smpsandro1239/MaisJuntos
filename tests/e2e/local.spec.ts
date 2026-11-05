@@ -169,3 +169,132 @@ test('RF-PROPOSE-05: propor espaço → aprovar no backoffice → POI no diretó
   const del = await request.delete(`/api/pois/${created.id}`);
   expect(del.ok()).toBe(true);
 });
+
+// ---------------------------------------------------------------------------
+// RF-MAP-01/02/03: mapa Leaflet real, GPS do utilizador e recentragem.
+// ---------------------------------------------------------------------------
+const PORTO = { latitude: 41.1579, longitude: -8.6291 };
+
+async function openMap(page: Page) {
+  await page.goto('/');
+  const accept = page.getByRole('button', { name: 'Aceitar' });
+  if (await accept.isVisible().catch(() => false)) await accept.click();
+  await page.locator('nav').getByText('Mapa', { exact: true }).click();
+  await expect(page.locator('.leaflet-container')).toBeVisible({ timeout: 15_000 });
+}
+
+async function mapCenter(page: Page): Promise<{ lat: number; lng: number } | null> {
+  return page.evaluate(() => {
+    const el = document.querySelector('.leaflet-container') as unknown as {
+      _juntosMap?: { getCenter: () => { lat: number; lng: number } };
+    } | null;
+    const map = el?._juntosMap;
+    if (!map) return null;
+    const center = map.getCenter();
+    return { lat: center.lat, lng: center.lng };
+  });
+}
+
+// Mesma fórmula/arredondamento de `src/services/weatherGeoService.ts`.
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c * 10) / 10;
+}
+
+test('RF-MAP-01: marcadores reais da BD → pré-visualização → detalhe', async ({ page }) => {
+  await openMap(page);
+
+  // Os marcadores vêm dos POIs reais (lat/lng da BD), não de uma lista fixa.
+  const markers = page.locator('.poi-custom-marker');
+  await expect(markers.first()).toBeVisible({ timeout: 20_000 });
+  expect(await markers.count()).toBeGreaterThan(0);
+
+  // Clique num marcador → cartão de pré-visualização do POI.
+  await markers.first().click({ force: true });
+  const details = page.getByRole('button', { name: 'Ver Detalhes' });
+  await expect(details).toBeVisible({ timeout: 10_000 });
+
+  // "Ver Detalhes" abre a ficha e o encaminhamento para a rota.
+  await details.click();
+  const route = page.locator('a[href^="https://maps.google.com/?q="]');
+  await expect(route).toBeVisible({ timeout: 10_000 });
+  await expect(route).toContainText('Como Chegar');
+});
+
+test('RF-MAP-02: GPS do utilizador centra o mapa na primeira localização', async ({ page, context }) => {
+  await context.grantPermissions(['geolocation']);
+  await context.setGeolocation(PORTO);
+  await openMap(page);
+
+  // Marcador azul da família presente no mapa.
+  await expect(page.locator('.family-gps-marker')).toBeVisible({ timeout: 15_000 });
+
+  // A primeira correção de GPS centra o mapa (flyTo) nas coordenadas reais.
+  await expect
+    .poll(async () => {
+      const center = await mapCenter(page);
+      if (!center) return 999;
+      return Math.max(Math.abs(center.lat - PORTO.latitude), Math.abs(center.lng - PORTO.longitude));
+    }, { timeout: 15_000 })
+    .toBeLessThan(0.02);
+});
+
+test('RF-MAP-02: botão de recentragem devolve o mapa à posição da família', async ({ page, context }) => {
+  await context.grantPermissions(['geolocation']);
+  await context.setGeolocation(PORTO);
+  await openMap(page);
+  await expect(page.locator('.family-gps-marker')).toBeVisible({ timeout: 15_000 });
+
+  // Afasta o mapa de propósito e usa o botão real da UI.
+  await page.evaluate(() => {
+    const el = document.querySelector('.leaflet-container') as unknown as {
+      _juntosMap?: { setView: (latlng: [number, number], zoom: number) => void };
+    } | null;
+    el?._juntosMap?.setView([41.5518, -8.4239], 12);
+  });
+  const moved = await mapCenter(page);
+  expect(Math.abs((moved?.lat ?? 0) - PORTO.latitude)).toBeGreaterThan(0.1);
+
+  await page.getByRole('button', { name: 'Recetrar mapa na sua posição' }).click();
+
+  await expect
+    .poll(async () => {
+      const center = await mapCenter(page);
+      if (!center) return 999;
+      return Math.max(Math.abs(center.lat - PORTO.latitude), Math.abs(center.lng - PORTO.longitude));
+    }, { timeout: 15_000 })
+    .toBeLessThan(0.02);
+});
+
+test('RF-MAP-03: cartões mostram a distância Haversine real com GPS', async ({ page, context, request }) => {
+  await context.grantPermissions(['geolocation']);
+  await context.setGeolocation(PORTO);
+  await page.goto('/');
+  const accept = page.getByRole('button', { name: 'Aceitar' });
+  if (await accept.isVisible().catch(() => false)) await accept.click();
+
+  // Cartão de POI com o badge "A x min (y km)" (o separador inicial é Explorar).
+  const card = page.locator('article').filter({ hasText: /A \d+ min \(\d+(?:\.\d+)? km\)/ }).first();
+  await expect(card).toBeVisible({ timeout: 20_000 });
+
+  // A distância exata só é calculada quando a família ativa o GPS.
+  await page.getByRole('button', { name: /Usar GPS/ }).click();
+
+  const name = await card.locator('img').first().getAttribute('alt');
+  expect(name, 'cartão sem nome de POI').toBeTruthy();
+  const pois = await (await request.get('/api/pois')).json();
+  const poi = pois.find((p: { name: string }) => p.name === name);
+  expect(poi, `POI ${name} não encontrado em /api/pois`).toBeTruthy();
+
+  // Distância calculada a partir do GPS (Porto) — não o valor estático da BD.
+  const expected = haversineKm(PORTO.latitude, PORTO.longitude, poi.latitude, poi.longitude);
+  await expect
+    .poll(async () => (await card.innerText()).includes(`(${expected} km)`), { timeout: 15_000 })
+    .toBe(true);
+});

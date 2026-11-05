@@ -53,6 +53,13 @@ export interface POI {
   distanceMinutes: number;
   distanceKm: number;
   city: string;
+  // Distrito/concelho normalizados (expansão nacional); opcionais para manter
+  // compatibilidade com as fichas antigas.
+  concelho?: string;
+  district?: string;
+  // Notas de curadoria/fonte (ex.: "Fonte: urba.pt; preço estimado").
+  notes?: string;
+  sourceUrl?: string;
   address: string;
   postalCode: string;
   latitude: number;

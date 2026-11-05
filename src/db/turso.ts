@@ -125,6 +125,8 @@ export async function getAllPoisFromDb(): Promise<POI[]> {
       distanceMinutes: Number(row.distanceMinutes || 10),
       distanceKm: Number(row.distanceKm || 2.5),
       city: String(row.concelho || row.city || 'Braga'),
+      concelho: String(row.concelho || row.city || 'Braga'),
+      district: String(row.district || row.concelho || row.city || 'Braga'),
       address: String(row.address || ''),
       postalCode: String(row.postalCode || '4700-000 Braga'),
       latitude: Number(row.latitude || 41.55),

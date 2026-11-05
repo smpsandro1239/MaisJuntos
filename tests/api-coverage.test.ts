@@ -605,6 +605,131 @@ async function runApiCoverageSuite() {
     }
   }
 
+  // RF-POI-NACIONAL: POI nacional com city/district/coords/amenities/notes preservados.
+  const nationalPoiId = `poi-test-national-${stamp}`;
+
+  try {
+    const create = await fetch(`${BASE_URL}/api/pois`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        id: nationalPoiId,
+        name: `[teste] Parque Nacional Porto ${stamp}`,
+        category: 'parque',
+        city: 'Porto',
+        concelho: 'Porto',
+        district: 'Porto',
+        latitude: 41.1579,
+        longitude: -8.6291,
+        minAge: 3,
+        maxAge: 12,
+        priceFamily: 15,
+        amenities: [{ icon: 'stroller', label: 'Acessível a carrinho' }],
+        notes: 'Fonte: portosecreto.pt',
+        sourceUrl: 'https://portosecreto.pt/teste',
+      }),
+    });
+    const created = await jsonOf(create);
+    assert(
+      '17. POST /api/pois payload nacional completo → 201',
+      create.status === 201 && created.id === nationalPoiId,
+      `status ${create.status}, id ${created.id}`
+    );
+
+    const detail = await fetch(`${BASE_URL}/api/pois/${nationalPoiId}`);
+    const detailBody = await jsonOf(detail);
+    const coordsOk = detailBody.latitude === 41.1579 && detailBody.longitude === -8.6291;
+    const cityOk = detailBody.city === 'Porto' && detailBody.district === 'Porto';
+    const priceOk = detailBody.priceFamily === 15;
+    const amenitiesOk = Array.isArray(detailBody.amenities) && detailBody.amenities.length >= 1;
+    const notesOk = detailBody.notes === 'Fonte: portosecreto.pt';
+    assert(
+      '17. GET /api/pois/:id preserva city/district/coords/priceFamily/amenities/notes',
+      detail.status === 200 && coordsOk && cityOk && priceOk && amenitiesOk && notesOk,
+      `lat=${detailBody.latitude} lng=${detailBody.longitude} city=${detailBody.city} district=${detailBody.district} priceFamily=${detailBody.priceFamily} amenities=${detailBody.amenities?.length} notes=${detailBody.notes}`
+    );
+  } catch (err: any) {
+    assert('17. POST /api/pois payload nacional completo', false, err.message);
+  }
+
+  // RF-POI-NACIONAL: filtro ?city=Porto inclui o POI nacional, não inclui Braga.
+  try {
+    const filtered = await fetch(`${BASE_URL}/api/pois?city=Porto`);
+    const list = await jsonOf(filtered);
+    const hasPorto = Array.isArray(list) && list.some((p: any) => p.id === nationalPoiId);
+    const hasBraga = Array.isArray(list) && list.some((p: any) => (p.city || '').toLowerCase() === 'braga');
+    const allCount = (await jsonOf(await fetch(`${BASE_URL}/api/pois`))).length || 0;
+    const filteredCount = Array.isArray(list) ? list.length : 0;
+    assert(
+      '17b. GET /api/pois?city=Porto inclui POI de Porto, exclui Braga',
+      filtered.status === 200 && hasPorto && !hasBraga && filteredCount > 0 && filteredCount < allCount,
+      `status ${filtered.status}, temPorto ${hasPorto}, temBraga ${hasBraga}, total ${allCount}, filtrado ${filteredCount}`
+    );
+  } catch (err: any) {
+    assert('17b. GET /api/pois?city=Porto filtro', false, err.message);
+  }
+
+  // RF-POI-NACIONAL: import-batch com 2 itens (Braga + Faro), filtro ?city=Faro.
+  let importIds: string[] = [];
+  try {
+    const batch = await fetch(`${BASE_URL}/api/pois/import-batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        newPois: [
+          {
+            name: `[teste] Braga Lote ${stamp}`,
+            category: 'parque',
+            city: 'Braga',
+            district: 'Braga',
+            concelho: 'Braga',
+            latitude: 41.55,
+            longitude: -8.42,
+            notes: 'Fonte: test-braga',
+            sourceUrl: 'https://test/braga',
+          },
+          {
+            name: `[teste] Faro Lote ${stamp}`,
+            category: 'parque',
+            city: 'Faro',
+            district: 'Faro',
+            concelho: 'Faro',
+            latitude: 37.0194,
+            longitude: -7.9304,
+            notes: 'Fonte: test-faro',
+            sourceUrl: 'https://test/faro',
+          },
+        ],
+      }),
+    });
+    const batchBody = await jsonOf(batch);
+    importIds = (batchBody.pois || []).map((p: any) => p.id);
+    assert(
+      '17c. POST /api/pois/import-batch 2 itens (Braga+Faro) → 200',
+      batch.status === 200 && importIds.length === 2,
+      `status ${batch.status}, count ${importIds.length}`
+    );
+
+    const faroFiltered = await fetch(`${BASE_URL}/api/pois?city=Faro`);
+    const faroList = await jsonOf(faroFiltered);
+    const hasFaro = Array.isArray(faroList) && faroList.some((p: any) => importIds.includes(p.id) && p.city === 'Faro');
+    const hasBragaInFaro = Array.isArray(faroList) && faroList.some((p: any) => importIds.includes(p.id) && p.city === 'Braga');
+    assert(
+      '17c. GET /api/pois?city=Faro devolve Faro, não Braga',
+      faroFiltered.status === 200 && hasFaro && !hasBragaInFaro,
+      `status ${faroFiltered.status}, temFaro ${hasFaro}, temBraga ${hasBragaInFaro}`
+    );
+  } catch (err: any) {
+    assert('17c. POST /api/pois/import-batch + filtro', false, err.message);
+  } finally {
+    // Cleanup dos POIs criados nos casos 17/17b/17c
+    for (const id of [nationalPoiId, ...importIds]) {
+      if (id) {
+        try { await fetch(`${BASE_URL}/api/pois/${id}`, { method: 'DELETE', headers: { Cookie: adminCookie } }); } catch {}
+      }
+    }
+  }
+
   const fails = results.filter((r) => !r.passed);
   console.log('\n==========================================================');
   console.log(`📊 RESUMO: ${results.length - fails.length}/${results.length} aprovados`);

@@ -7,30 +7,192 @@ import { broadcast } from '../broadcast';
 import type { OperationalMetrics, POI } from '../types';
 import { INITIAL_METRICS } from '../data/mockData';
 
+const poiAmenitySchema = z.object({
+  id: z.string().optional(),
+  icon: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().optional(),
+  verified: z.boolean().optional(),
+});
+const poiOpeningHourSchema = z.object({
+  day: z.string(),
+  status: z.enum(['open', 'special', 'closed']).optional(),
+  label: z.string().optional(),
+  open: z.string().optional(),
+  close: z.string().optional(),
+});
 const poiCreateSchema = z.object({
+  id: z.string().min(1).optional(),
+  code: z.string().min(1).optional(),
   name: z.string().min(2, 'O nome do ponto de interesse é obrigatório'),
+  slug: z.string().min(1).optional(),
   category: z.string().optional(),
   categoryLabel: z.string().optional(),
+  categoryIcon: z.string().optional(),
   shortDescription: z.string().optional(),
   fullDescription: z.string().optional(),
   coverImage: z.string().optional(),
   address: z.string().optional(),
-  latitude: z.number().optional(),
-  longitude: z.number().optional(),
-  priceChild: z.number().optional(),
-  priceAdult: z.number().optional(),
-  priceFamily: z.number().optional(),
+  city: z.string().optional(),
+  concelho: z.string().optional(),
+  district: z.string().optional(),
+  postalCode: z.string().optional(),
+  notes: z.string().optional(),
+  sourceUrl: z.string().optional(),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  minAge: z.number().int().min(0).max(18).optional(),
+  maxAge: z.number().int().min(0).max(18).optional(),
+  ageRecommendation: z.string().optional(),
+  priceChild: z.number().min(0).optional(),
+  priceAdult: z.number().min(0).optional(),
+  priceFamily: z.number().min(0).optional(),
+  priceNotes: z.string().optional(),
   isFree: z.boolean().optional(),
   isOpenNow: z.boolean().optional(),
   spaceType: z.enum(['interior', 'exterior', 'mixed']).optional(),
+  openingHoursToday: z.string().optional(),
+  schedule: z.array(poiOpeningHourSchema).optional(),
+  amenities: z.array(poiAmenitySchema).optional(),
+  hasNursery: z.boolean().optional(),
+  hasStrollerAccess: z.boolean().optional(),
+  hasParking: z.boolean().optional(),
+  phone: z.string().optional(),
+  status: z.enum(['verified', 'pending', 'review', 'draft']).optional(),
+  verifiedSource: z.string().optional(),
+  verifiedBy: z.string().optional(),
+  dataQualityScore: z.number().min(0).max(100).optional(),
 }).passthrough();
+
+const normalizeForCompare = (str: string) =>
+  String(str || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
 
 const routes = new Hono<AppEnv>();
 
+interface PoiBuildOptions {
+  idPrefix?: string;
+  rating?: number;
+  reviewCount?: number;
+  verifiedSource?: string;
+  isFreeDefault?: boolean;
+  categoryIcon?: string;
+  status?: POI['status'];
+}
+
+// Constrói a ficha POI a partir do payload, preservando o distrito/concelho,
+// coordenadas, idades, preços, horários e comodidades reais. Usado tanto pela
+// criação individual como pela importação em lote (evita divergência).
+function buildPoiFromInput(
+  input: Record<string, any>,
+  user: { name?: string } | undefined,
+  options: PoiBuildOptions = {}
+): POI {
+  const amenities: POI['amenities'] = Array.isArray(input.amenities)
+    ? input.amenities.map((a: any) => ({
+        id: String(a?.id || a?.icon || 'amenity'),
+        label: String(a?.label || a?.id || a?.icon || 'Comodidade'),
+        description: String(a?.description || ''),
+        icon: String(a?.icon || a?.id || 'check'),
+        verified: Boolean(a?.verified),
+      }))
+    : [];
+  const addAmenity = (icon: string, label: string) => {
+    if (!amenities.some((a) => a.icon === icon)) {
+      amenities.push({ id: icon, label, description: '', icon, verified: false });
+    }
+  };
+  if (input.hasNursery) addAmenity('baby_changing_station', 'Fraldário');
+  if (input.hasStrollerAccess) addAmenity('stroller', 'Acessível a carrinho');
+  if (input.hasParking) addAmenity('local_parking', 'Estacionamento');
+
+  const schedule: POI['schedule'] = Array.isArray(input.schedule)
+    ? input.schedule.map((h: any) => ({
+        day: String(h?.day || ''),
+        status: (h?.status as POI['schedule'][number]['status']) || 'open',
+        label: String(h?.label || h?.day || ''),
+        open: h?.open ? String(h.open) : undefined,
+        close: h?.close ? String(h.close) : undefined,
+      }))
+    : [];
+
+  const now = new Date().toISOString();
+  const city = input.city || input.concelho || input.district || 'Braga';
+  const idPrefix = options.idPrefix || 'poi';
+  return {
+    ...input,
+    id: input.id || `${idPrefix}-${Date.now()}`,
+    code: input.code || `#POI-${Date.now().toString().slice(-4)}`,
+    name: String(input.name),
+    slug: input.slug || String(input.name).toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    category: input.category || 'parque',
+    categoryLabel: input.categoryLabel || 'Parque & Lazer',
+    categoryIcon: input.categoryIcon || options.categoryIcon || 'place',
+    shortDescription: input.shortDescription || '',
+    fullDescription: input.fullDescription || input.shortDescription || '',
+    rating: options.rating ?? 5.0,
+    reviewCount: options.reviewCount ?? 1,
+    images: [],
+    coverImage:
+      input.coverImage ||
+      'https://images.unsplash.com/photo-1519331379826-f10be5486c6f?w=600&auto=format&fit=crop&q=80',
+    distanceMinutes: 10,
+    distanceKm: 2.0,
+    city,
+    concelho: input.concelho || city,
+    district: input.district || city,
+    address: input.address || `${city}, Portugal`,
+    postalCode: input.postalCode || '',
+    latitude: input.latitude ?? 41.55,
+    longitude: input.longitude ?? -8.42,
+    minAge: input.minAge ?? 0,
+    maxAge: input.maxAge ?? 12,
+    ageRecommendation: input.ageRecommendation || 'Todas as idades',
+    isFree: input.isFree ?? options.isFreeDefault ?? false,
+    priceChild: input.priceChild ?? 0,
+    priceAdult: input.priceAdult ?? 0,
+    priceFamily: input.priceFamily ?? 0,
+    priceNotes: input.priceNotes || (input.isFree ? 'Entrada gratuita' : 'Preçário a confirmar'),
+    spaceType: input.spaceType || 'mixed',
+    isOpenNow: Boolean(input.isOpenNow),
+    openingHoursToday: input.openingHoursToday || '09:00 - 18:00',
+    schedule,
+    amenities,
+    experienceHighlights: [],
+    verifiedAgoDays: 0,
+    verifiedSource: input.verifiedSource || options.verifiedSource || `Adicionado por ${user?.name || 'Administração'}`,
+    verifiedBy: input.verifiedBy || user?.name || 'Administração',
+    dataQualityScore: input.dataQualityScore ?? 90,
+    status: options.status || input.status || 'verified',
+    bookingPolicy: 'none',
+    phone: input.phone || '+351 253 000 000',
+    phoneTested: true,
+    lastPhysicalAudit: now.split('T')[0],
+    createdAt: now,
+    updatedAt: now,
+  } as POI;
+}
+
 // GET /api/pois (Público) — leitura por pedido da Turso (sem estado em memória no Workers)
 routes.get('/', async (c) => {
+  const { searchParams } = new URL(c.req.url);
+  const cityFilter = searchParams.get('city');
+  const districtFilter = searchParams.get('district');
   const pois = await getAllPoisFromDb(getDb(c.env));
-  return c.json(pois);
+  let filtered = pois;
+  if (cityFilter || districtFilter) {
+    filtered = pois.filter((p) => {
+      const cityNorm = normalizeForCompare(p.city || '');
+      const districtNorm = normalizeForCompare(p.district || '');
+      const cityMatch = !cityFilter || cityNorm === normalizeForCompare(cityFilter);
+      const districtMatch = !districtFilter || districtNorm === normalizeForCompare(districtFilter);
+      return cityMatch && districtMatch;
+    });
+  }
+  return c.json(filtered);
 });
 
 // GET /api/pois/:id (Público)
@@ -52,54 +214,7 @@ routes.post('/', rateLimit('API_RATE_LIMITER'), requireRole(['admin', 'curator']
   const body = raw || {};
   const payload = parseResult.data;
   const user = c.get('user');
-  const newPoi: POI = {
-    ...payload,
-    id: body.id || `poi-${Date.now()}`,
-    code: body.code || `#POI-${Date.now().toString().slice(-4)}`,
-    name: payload.name,
-    slug: payload.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-    category: payload.category || 'parque',
-    categoryLabel: payload.categoryLabel || 'Parque & Lazer',
-    categoryIcon: 'place',
-    shortDescription: payload.shortDescription || '',
-    fullDescription: payload.fullDescription || payload.shortDescription || '',
-    rating: 5.0,
-    reviewCount: 1,
-    images: [],
-    coverImage: payload.coverImage || 'https://images.unsplash.com/photo-1519331379826-f10be5486c6f?w=600&auto=format&fit=crop&q=80',
-    distanceMinutes: 10,
-    distanceKm: 2.0,
-    city: 'Braga',
-    address: payload.address || 'Braga, Portugal',
-    postalCode: '4700-000 Braga',
-    latitude: payload.latitude || 41.55,
-    longitude: payload.longitude || -8.42,
-    minAge: 0,
-    maxAge: 12,
-    ageRecommendation: 'Todas as idades',
-    isFree: Boolean(payload.isFree),
-    priceChild: payload.priceChild || 0,
-    priceAdult: payload.priceAdult || 0,
-    priceFamily: payload.priceFamily || 0,
-    priceNotes: payload.isFree ? 'Entrada gratuita' : 'Preçário municipal',
-    spaceType: payload.spaceType || 'mixed',
-    isOpenNow: Boolean(payload.isOpenNow),
-    openingHoursToday: '09:00 - 18:00',
-    schedule: [],
-    amenities: [],
-    experienceHighlights: [],
-    verifiedAgoDays: 0,
-    verifiedSource: `Adicionado por ${user?.name}`,
-    verifiedBy: user?.name || 'Administração',
-    dataQualityScore: 90,
-    status: 'verified',
-    bookingPolicy: 'none',
-    phone: '+351 253 000 000',
-    phoneTested: true,
-    lastPhysicalAudit: new Date().toISOString().split('T')[0],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
+  const newPoi = buildPoiFromInput(payload, user, { idPrefix: 'poi' });
 
   const db = getDb(c.env);
   await insertOrUpdatePoiInDb(db, newPoi);
@@ -228,56 +343,16 @@ routes.post('/import-batch', rateLimit('API_RATE_LIMITER'), requireRole(['admin'
   const user = c.get('user');
   const addedList: POI[] = [];
   for (const item of newPois) {
-    const formatted: POI = {
-      ...item,
-      id: `poi-imported-${Date.now()}-${item.name?.slice(0, 3)}`,
-      code: `#POI-${Date.now().toString().slice(-4)}`,
-      name: item.name || 'Parque Familiar',
-      slug: (item.name || 'parque').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-      category: item.category || 'parque',
-      categoryLabel: item.categoryLabel || 'Parque',
-      categoryIcon: 'park',
-      shortDescription: item.shortDescription || '',
-      fullDescription: item.fullDescription || item.shortDescription || '',
+    const newPoi = buildPoiFromInput(item as Record<string, any>, user, {
+      idPrefix: 'poi-import',
       rating: 4.8,
       reviewCount: 10,
-      images: [],
-      coverImage: 'https://images.unsplash.com/photo-1519331379826-f10be5486c6f?w=600&auto=format&fit=crop&q=80',
-      distanceMinutes: 10,
-      distanceKm: 2.0,
-      city: 'Braga',
-      address: item.address || 'Braga, Portugal',
-      postalCode: '4700-000 Braga',
-      latitude: item.latitude || 41.55,
-      longitude: item.longitude || -8.42,
-      minAge: 0,
-      maxAge: 12,
-      ageRecommendation: 'Todas as idades',
-      isFree: true,
-      priceChild: 0,
-      priceAdult: 0,
-      priceFamily: 0,
-      priceNotes: 'Entrada livre',
-      spaceType: 'exterior',
-      isOpenNow: true,
-      openingHoursToday: 'Aberto',
-      schedule: [],
-      amenities: [],
-      experienceHighlights: [],
-      verifiedAgoDays: 0,
       verifiedSource: 'Importação em Lote Autorizada',
-      verifiedBy: user?.name || 'Administrador',
-      dataQualityScore: 90,
-      status: 'verified',
-      bookingPolicy: 'none',
-      phone: '+351 253 000 000',
-      phoneTested: true,
-      lastPhysicalAudit: new Date().toISOString().split('T')[0],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    await insertOrUpdatePoiInDb(db, formatted);
-    addedList.push(formatted);
+      isFreeDefault: true,
+      categoryIcon: 'park',
+    });
+    await insertOrUpdatePoiInDb(db, newPoi);
+    addedList.push(newPoi);
   }
 
   const metrics = await getAppState<OperationalMetrics>(db, 'metrics', { ...INITIAL_METRICS });

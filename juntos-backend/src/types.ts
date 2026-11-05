@@ -74,6 +74,12 @@ export interface POI {
   verifiedAgoDays: number;
   verifiedSource: string;
   verifiedBy: string;
+  // RF-POI-08: verificação presencial (review → verified).
+  verifiedAt?: string;
+  verificationChecklist?: string[];
+  verificationNotes?: string;
+  // RF-PROPOSE-06: morada ainda não geocodificada (lat/lng por confirmar).
+  geocodingPending?: boolean;
   dataQualityScore: number; // 0 - 100
   status: 'verified' | 'pending' | 'review' | 'draft';
   hasActiveReport?: boolean;

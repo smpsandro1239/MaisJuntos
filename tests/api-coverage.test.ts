@@ -426,6 +426,97 @@ async function runApiCoverageSuite() {
     assert('14. GET /api/auth/account/sessions lista sessões e marca a atual', false, err.message);
   }
 
+  // RF-POI-08: verificação presencial (review → verified) com checklist e audit.
+  // O POST /api/pois cria sempre em 'verified', pelo que o POI é criado e depois
+  // colocado em 'review' via PUT, simulando o resultado de uma aprovação.
+  let verifyPoiId = '';
+  try {
+    const created = await fetch(`${BASE_URL}/api/pois`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        id: `poi-test-verify-${stamp}`,
+        name: `[teste] POI Verify ${stamp}`,
+        category: 'parque',
+        address: 'Rua da Verificação, Braga',
+      }),
+    });
+    const createdPoi = await jsonOf(created);
+    verifyPoiId = createdPoi?.id || '';
+
+    const toReview = await fetch(`${BASE_URL}/api/pois/${verifyPoiId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ status: 'review' }),
+    });
+    assert(
+      '15-pre. POI de teste criado e colocado em review',
+      created.status === 201 && Boolean(verifyPoiId) && toReview.status === 200,
+      `create ${created.status}, put ${toReview.status}`
+    );
+
+    const empty = await fetch(`${BASE_URL}/api/pois/${verifyPoiId}/verify`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ checklist: [] }),
+    });
+    assert('15f. Verificar sem checklist → 400', empty.status === 400, `status ${empty.status}`);
+
+    const verify = await fetch(`${BASE_URL}/api/pois/${verifyPoiId}/verify`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        checklist: ['Fotografias atuais', 'Morada confirmada'],
+        notes: 'Curadoria presencial de teste.',
+      }),
+    });
+    const verified = await jsonOf(verify);
+    assert(
+      '15. Verificar POI em review (admin) → 200, status verified',
+      verify.status === 200 &&
+        verified.status === 'verified' &&
+        typeof verified.verifiedAt === 'string' &&
+        Array.isArray(verified.verificationChecklist) &&
+        verified.verificationChecklist.length === 2 &&
+        verified.dataQualityScore === 100,
+      `status ${verify.status}, poi ${verified.status}, score ${verified.dataQualityScore}`
+    );
+
+    const again = await fetch(`${BASE_URL}/api/pois/${verifyPoiId}/verify`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ checklist: ['Fotografias atuais'] }),
+    });
+    assert('15b. Verificar POI já verificado → 400', again.status === 400, `status ${again.status}`);
+
+    const asParent = await fetch(`${BASE_URL}/api/pois/${verifyPoiId}/verify`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: parentCookie },
+      body: JSON.stringify({ checklist: ['Fotografias atuais'] }),
+    });
+    assert('15c. Verificar como parent → 403', asParent.status === 403, `status ${asParent.status}`);
+
+    const noAuth = await fetch(`${BASE_URL}/api/pois/${verifyPoiId}/verify`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ checklist: ['Fotografias atuais'] }),
+    });
+    assert('15d. Verificar sem sessão → 401', noAuth.status === 401, `status ${noAuth.status}`);
+
+    const missing = await fetch(`${BASE_URL}/api/pois/nao-existe-${stamp}/verify`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ checklist: ['Fotografias atuais'] }),
+    });
+    assert('15e. Verificar POI inexistente → 404', missing.status === 404, `status ${missing.status}`);
+  } catch (err: any) {
+    assert('15. Verificar POI em review (admin) → 200, status verified', false, err.message);
+  } finally {
+    if (verifyPoiId) {
+      await fetch(`${BASE_URL}/api/pois/${verifyPoiId}`, { method: 'DELETE', headers: { Cookie: adminCookie } });
+    }
+  }
+
   const fails = results.filter((r) => !r.passed);
   console.log('\n==========================================================');
   console.log(`📊 RESUMO: ${results.length - fails.length}/${results.length} aprovados`);

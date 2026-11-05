@@ -13,7 +13,7 @@ export const PoiEditorScreen: React.FC<PoiEditorScreenProps> = ({
   onBack,
   onSimulateMobile,
 }) => {
-  const { updatePoi } = useRealtime();
+  const { updatePoi, verifyPoiChecklist } = useRealtime();
   const [poi, setPoi] = useState<POI>({ ...initialPoi });
   const [activeTags, setActiveTags] = useState<string[]>([
     'Astronomia & Espaço',
@@ -21,6 +21,20 @@ export const PoiEditorScreen: React.FC<PoiEditorScreenProps> = ({
     'Sessões Imersivas 360º',
   ]);
   const [savedSuccess, setSavedSuccess] = useState(false);
+
+  // RF-POI-08: verificação presencial (review → verified).
+  const [verifyOpen, setVerifyOpen] = useState(false);
+  const [verifyChecks, setVerifyChecks] = useState<Record<string, boolean>>({});
+  const [verifyNotes, setVerifyNotes] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+
+  const VERIFY_CHECKLIST_ITEMS = [
+    'Fotografias atuais',
+    'Morada confirmada',
+    'Horários confirmados',
+    'Contacto validado',
+  ];
 
   const availableTags = [
     'Astronomia & Espaço',
@@ -42,6 +56,27 @@ export const PoiEditorScreen: React.FC<PoiEditorScreenProps> = ({
     await updatePoi(poi);
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 2500);
+  };
+
+  // RF-POI-08: submete a checklist de verificação presencial.
+  const handleVerify = async () => {
+    const checklist = VERIFY_CHECKLIST_ITEMS.filter((item) => verifyChecks[item]);
+    if (checklist.length === 0) {
+      setVerifyError('Seleciona pelo menos um item da checklist.');
+      return;
+    }
+    setVerifying(true);
+    setVerifyError(null);
+    const result = await verifyPoiChecklist(poi.id, checklist, verifyNotes.trim() || undefined);
+    setVerifying(false);
+    if (result.ok) {
+      setVerifyOpen(false);
+      setVerifyChecks({});
+      setVerifyNotes('');
+      setPoi((prev) => ({ ...prev, status: 'verified' }));
+    } else {
+      setVerifyError(result.error ?? 'Não foi possível verificar o POI.');
+    }
   };
 
   return (
@@ -107,6 +142,18 @@ export const PoiEditorScreen: React.FC<PoiEditorScreenProps> = ({
               >
                 <span className="material-symbols-outlined text-[18px] text-primary">smartphone</span>
                 <span>Simular App Mobile</span>
+              </button>
+            )}
+
+            {poi.status === 'review' && (
+              <button
+                onClick={() => setVerifyOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-label-lg text-xs font-semibold transition-all shadow-xs active:scale-95"
+                type="button"
+                data-testid="poi-verify-button"
+              >
+                <span className="material-symbols-outlined text-[18px]">verified_user</span>
+                <span>Marcar como verificado</span>
               </button>
             )}
 
@@ -579,6 +626,96 @@ export const PoiEditorScreen: React.FC<PoiEditorScreenProps> = ({
           </div>
         </div>
       </div>
+
+      {/* RF-POI-08: modal de verificação presencial */}
+      {verifyOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="verify-poi-title"
+        >
+          <div className="w-full max-w-lg bg-surface-container-lowest rounded-2xl border border-surface-container-high shadow-xl p-5">
+            <div className="flex items-start justify-between gap-3 pb-3 mb-3 border-b border-surface-container-high">
+              <div>
+                <h2 id="verify-poi-title" className="font-headline-sm text-base font-bold text-on-surface flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-emerald-600 text-[20px]">verified_user</span>
+                  Marcar POI como verificado
+                </h2>
+                <p className="font-body-sm text-xs text-on-surface-variant mt-1">
+                  Confirma que a curadoria presencial de &quot;{poi.name}&quot; foi concluída.
+                </p>
+              </div>
+              <button
+                onClick={() => setVerifyOpen(false)}
+                className="p-1 rounded-lg hover:bg-surface-container text-on-surface-variant"
+                type="button"
+                aria-label="Fechar"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              {VERIFY_CHECKLIST_ITEMS.map((item) => (
+                <label
+                  key={item}
+                  className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-surface-container-low border border-surface-container-high cursor-pointer hover:bg-surface-container"
+                >
+                  <input
+                    type="checkbox"
+                    checked={Boolean(verifyChecks[item])}
+                    onChange={(e) =>
+                      setVerifyChecks((prev) => ({ ...prev, [item]: e.target.checked }))
+                    }
+                    className="w-4 h-4 rounded accent-emerald-600"
+                  />
+                  <span className="text-xs font-semibold text-on-surface">{item}</span>
+                </label>
+              ))}
+
+              <label className="block mt-1">
+                <span className="block font-label-md text-xs text-on-surface font-bold mb-1">
+                  Notas de verificação (opcional)
+                </span>
+                <textarea
+                  value={verifyNotes}
+                  onChange={(e) => setVerifyNotes(e.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2 rounded-xl bg-surface-container-low text-on-surface text-sm border border-surface-container-high focus:outline-none focus:ring-2 focus:ring-primary resize-none"
+                  placeholder="Ex.: horários atualizados na visita de 05/11."
+                />
+              </label>
+
+              {verifyError && (
+                <p className="text-xs font-semibold text-red-600" role="alert">
+                  {verifyError}
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 mt-4">
+              <button
+                onClick={() => setVerifyOpen(false)}
+                className="px-3.5 py-2 rounded-xl bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-label-lg text-xs font-semibold transition-all"
+                type="button"
+                disabled={verifying}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleVerify}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-label-lg text-xs font-bold transition-all shadow-sm active:scale-95 disabled:opacity-60"
+                type="button"
+                disabled={verifying}
+              >
+                <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                <span>{verifying ? 'A verificar…' : 'Confirmar verificação'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

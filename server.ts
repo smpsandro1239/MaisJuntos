@@ -1279,6 +1279,76 @@ app.put('/api/pois/:id', adminLimiter, requireRole(['admin', 'curator']), async 
   }
 });
 
+// PUT /api/pois/:id/verify (Restrito a 'admin' e 'curator') — RF-POI-08
+// Promove um POI em revisão a verificado, após curadoria presencial.
+// Espelho do Worker (juntos-backend/src/routes/pois.ts).
+app.put('/api/pois/:id/verify', adminLimiter, requireRole(['admin', 'curator']), async (req, res, next) => {
+  try {
+    const index = pois.findIndex((p) => p.id === req.params.id);
+    if (index === -1) return res.status(404).json({ error: 'Ponto de interesse não encontrado' });
+
+    if (pois[index].status === 'verified') {
+      return res.status(400).json({ error: 'Este ponto de interesse já está verificado.' });
+    }
+
+    const checklist = Array.isArray(req.body?.checklist)
+      ? (req.body.checklist as unknown[]).filter(
+          (item): item is string => typeof item === 'string' && item.trim().length > 0
+        )
+      : [];
+    if (checklist.length === 0) {
+      return res.status(400).json({ error: 'A checklist de verificação não pode estar vazia.' });
+    }
+
+    const user = req.user as User;
+    const now = new Date().toISOString();
+    const updated: POI = {
+      ...pois[index],
+      status: 'verified',
+      verifiedAt: now,
+      verifiedBy: user?.name || 'Administração',
+      verificationChecklist: checklist,
+      verificationNotes: typeof req.body?.notes === 'string' ? req.body.notes : '',
+      dataQualityScore: Math.min(100, (pois[index].dataQualityScore ?? 0) + 10),
+      updatedAt: now,
+    };
+
+    const nextMetrics: OperationalMetrics = {
+      ...metrics,
+      recentEditorialActions: [
+        {
+          id: `act-${Date.now()}`,
+          author: user?.name || 'Administração',
+          poiName: updated.name,
+          timeAgo: 'Agora mesmo',
+          badge: 'POI verificado',
+          color: 'primary',
+        },
+        ...(metrics.recentEditorialActions || []),
+      ].slice(0, 20),
+    };
+
+    // Transação atómica: POI + métricas. Uma falha faz rollback de ambas, para
+    // nunca ficar um POI verificado com o audit log por atualizar.
+    await client.batch([
+      poiUpsertStatement(updated),
+      {
+        sql: 'INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)',
+        args: ['metrics', JSON.stringify(nextMetrics)],
+      },
+    ]);
+
+    // Só após o commit é que a memória é sincronizada e os clientes notificados.
+    pois[index] = updated;
+    Object.assign(metrics, nextMetrics);
+
+    broadcast({ type: 'poi:update', data: updated });
+    return res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE /api/pois/:id (Restrito exclusivamente a 'admin')
 app.delete('/api/pois/:id', adminLimiter, requireRole(['admin']), async (req, res, next) => {
   try {

@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AppEnv } from '../security';
 import { rateLimit, requireRole } from '../security';
-import { deletePoiFromDb, getAllPoisFromDb, getAppState, insertOrUpdatePoiInDb, setAppState, getDb } from '../db/index';
+import { deletePoiFromDb, getAllPoisFromDb, getAppState, insertOrUpdatePoiInDb, poiUpsertStatement, setAppState, getDb } from '../db/index';
 import { broadcast } from '../broadcast';
 import type { OperationalMetrics, POI } from '../types';
 import { INITIAL_METRICS } from '../data/mockData';
@@ -110,6 +110,71 @@ routes.post('/', rateLimit('API_RATE_LIMITER'), requireRole(['admin', 'curator']
 
   await broadcast(c.env, { type: 'poi:create', data: newPoi });
   return c.json(newPoi, 201);
+});
+
+// PUT /api/pois/:id/verify (Restrito a 'admin' e 'curator') — RF-POI-08
+// Promove um POI em revisão a verificado, após curadoria presencial.
+routes.put('/:id/verify', rateLimit('API_RATE_LIMITER'), requireRole(['admin', 'curator']), async (c) => {
+  const db = getDb(c.env);
+  const id = c.req.param('id');
+  const pois = await getAllPoisFromDb(db);
+  const index = pois.findIndex((p) => p.id === id);
+  if (index === -1) return c.json({ error: 'Ponto de interesse não encontrado' }, 404);
+
+  if (pois[index].status === 'verified') {
+    return c.json({ error: 'Este ponto de interesse já está verificado.' }, 400);
+  }
+
+  const body = (await c.req.json().catch(() => null)) as { checklist?: unknown; notes?: unknown } | null;
+  const checklist = Array.isArray(body?.checklist)
+    ? (body.checklist as unknown[]).filter(
+        (item): item is string => typeof item === 'string' && item.trim().length > 0
+      )
+    : [];
+  if (checklist.length === 0) {
+    return c.json({ error: 'A checklist de verificação não pode estar vazia.' }, 400);
+  }
+
+  const user = c.get('user');
+  const now = new Date().toISOString();
+  const updated: POI = {
+    ...pois[index],
+    status: 'verified',
+    verifiedAt: now,
+    verifiedBy: user?.name || 'Administração',
+    verificationChecklist: checklist,
+    verificationNotes: typeof body?.notes === 'string' ? body.notes : '',
+    dataQualityScore: Math.min(100, (pois[index].dataQualityScore ?? 0) + 10),
+    updatedAt: now,
+  };
+
+  const metrics = await getAppState<OperationalMetrics>(db, 'metrics', { ...INITIAL_METRICS });
+  const nextMetrics: OperationalMetrics = {
+    ...metrics,
+    recentEditorialActions: [
+      {
+        id: `act-${Date.now()}`,
+        author: user?.name || 'Administração',
+        poiName: updated.name,
+        timeAgo: 'Agora mesmo',
+        badge: 'POI verificado',
+        color: 'primary',
+      },
+      ...(metrics.recentEditorialActions || []),
+    ].slice(0, 20),
+  };
+
+  // Transação atómica: POI + métricas (rollback conjunta em caso de falha).
+  await db.batch([
+    poiUpsertStatement(updated),
+    {
+      sql: 'INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)',
+      args: ['metrics', JSON.stringify(nextMetrics)],
+    },
+  ]);
+
+  await broadcast(c.env, { type: 'poi:update', data: updated });
+  return c.json(updated);
 });
 
 // PUT /api/pois/:id (Restrito a 'admin' e 'curator')

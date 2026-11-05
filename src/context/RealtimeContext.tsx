@@ -23,6 +23,11 @@ interface RealtimeContextType {
   addToast: (title: string, message: string) => void;
   removeToast: (id: string) => void;
   verifyPoi: (poiId: string) => Promise<void>;
+  verifyPoiChecklist: (
+    poiId: string,
+    checklist: string[],
+    notes?: string
+  ) => Promise<{ ok: boolean; error?: string }>;
   updatePoi: (poi: POI) => Promise<void>;
   createPoi: (poi: Partial<POI>) => Promise<void>;
   deletePoi: (poiId: string) => Promise<void>;
@@ -206,6 +211,39 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     addToast('POI Verificado', 'Os dados do espaço foram auditados e propagados em tempo real!');
   };
 
+  // RF-POI-08: verificação presencial com checklist. Só admin/curator (a API
+  // valida o papel). O POI só é atualizado na lista depois da confirmação.
+  const verifyPoiChecklist = async (
+    poiId: string,
+    checklist: string[],
+    notes?: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const res = await fetch(`${API_BASE}/api/pois/${poiId}/verify`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checklist, notes }),
+      });
+      if (res.ok) {
+        const updated = (await res.json()) as POI;
+        setPois((prev) => prev.map((p) => (p.id === poiId ? updated : p)));
+        addToast('POI Verificado', `"${updated.name}" promovido a verificado.`);
+        return { ok: true };
+      }
+      let message = 'Não foi possível verificar o POI.';
+      try {
+        const body = (await res.json()) as { error?: string };
+        if (body?.error) message = body.error;
+      } catch {
+        // resposta sem corpo JSON
+      }
+      return { ok: false, error: message };
+    } catch {
+      return { ok: false, error: 'Falha de rede. Verifica a ligação e tenta novamente.' };
+    }
+  };
+
   const updatePoi = async (updated: POI) => {
     setPois((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
     try {
@@ -370,6 +408,7 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         addToast,
         removeToast,
         verifyPoi,
+        verifyPoiChecklist,
         updatePoi,
         createPoi,
         deletePoi,

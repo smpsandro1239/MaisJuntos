@@ -70,6 +70,8 @@ export interface POI {
   isFree: boolean;
   priceChild: number;
   priceAdult: number;
+  // Preço para família típica (2 adultos + 2 crianças): 2*priceAdult + 2*priceChild.
+  // Quando existe pacote oficial do espaço, usar esse valor (documentar nas notes).
   priceFamily: number;
   priceNotes: string;
   spaceType: 'interior' | 'exterior' | 'mixed';

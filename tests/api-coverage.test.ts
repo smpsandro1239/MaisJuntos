@@ -730,6 +730,35 @@ async function runApiCoverageSuite() {
     }
   }
 
+  // RF-POI-NACIONAL: filtro ?district= (paridade com ?city=).
+  try {
+    const distPorto = await fetch(`${BASE_URL}/api/pois?district=Porto`);
+    const listPorto = await jsonOf(distPorto);
+    const hasPortoDist = Array.isArray(listPorto) && listPorto.some((p: any) => p.district === 'Porto');
+    const hasBragaInPorto = Array.isArray(listPorto) && listPorto.some((p: any) => p.district === 'Braga');
+    assert(
+      '17d. GET /api/pois?district=Porto inclui Porto, exclui Braga',
+      distPorto.status === 200 && hasPortoDist && !hasBragaInPorto,
+      `status ${distPorto.status}, temPorto ${hasPortoDist}, temBraga ${hasBragaInPorto}`
+    );
+  } catch (err: any) {
+    assert('17d. GET /api/pois?district=Porto filtro', false, err.message);
+  }
+
+  try {
+    const distBraga = await fetch(`${BASE_URL}/api/pois?district=Braga`);
+    const listBraga = await jsonOf(distBraga);
+    const hasBragaDist = Array.isArray(listBraga) && listBraga.some((p: any) => p.district === 'Braga');
+    const hasPortoInBraga = Array.isArray(listBraga) && listBraga.some((p: any) => p.district === 'Porto');
+    assert(
+      '17e. GET /api/pois?district=Braga inclui Braga, exclui Porto',
+      distBraga.status === 200 && hasBragaDist && !hasPortoInBraga,
+      `status ${distBraga.status}, temBraga ${hasBragaDist}, temPorto ${hasPortoInBraga}`
+    );
+  } catch (err: any) {
+    assert('17e. GET /api/pois?district=Braga filtro', false, err.message);
+  }
+
   const fails = results.filter((r) => !r.passed);
   console.log('\n==========================================================');
   console.log(`📊 RESUMO: ${results.length - fails.length}/${results.length} aprovados`);

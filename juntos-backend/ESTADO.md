@@ -424,3 +424,59 @@ Backend em paridade obrigatória: Worker **e** Express.
   ter `<input type="file">` real (a importação em massa continua simulada).
 - **Provas:** `test:api` 42/42 · `test:atomic` 4/4 · `test:geo` 8/8 ·
   Playwright `local.spec.ts` 15 passed · tsc raiz 0 · tsc Worker 0.
+
+## CICLO 2026-11-06 — Povoamento nacional (Lote 1 + Lote 2)
+
+### Contrato nacional (commit 8c4409a, pushed)
+- `POST /api/pois` e `POST /api/pois/import-batch` usam `buildPoiFromInput`
+  (Express + Worker): preservam `city`, `concelho`, `district`, `latitude`,
+  `longitude`, `minAge`/`maxAge`, `priceFamily`, `amenities`, `notes`, `sourceUrl`
+  em vez de hardcodar `city:'Braga'`.
+- `GET /api/pois` aceita `?city=` e `?district=` com normalização de acentos.
+- Read mappers (`src/db/turso.ts` + `juntos-backend/src/db/index.ts`) expõem
+  `district`/`concelho`. `POI` ganhou `concelho?`, `district?`, `notes?`,
+  `sourceUrl?`.
+- Testes: 49/49 (`test:api`), 4/4 (`test:atomic`), 8/8 (`test:geo`).
+
+### Lote 1 — Braga, Porto, Lisboa (30 POIs)
+- 10 POIs por distrito, todos com coords reais (geocodificadas via Nominatim).
+- `priceFamily = 2×priceAdult + 2×priceChild` (família típica 2A+2C).
+- `hasNursery`/`hasStrollerAccess` = true só com URL específica de confirmação.
+- 10 POIs com `hasNursery=false` + "desconhecido" nas notes (anti-alucinação).
+- Jardim Zoológico de Lisboa: `hasNursery=true` com URL específico
+  (`zoo.pt`, secção Acessibilidades).
+- Commit: `8c4409a` (pushed, CI verde `42050594919`).
+
+### Lote 2 — Aveiro, Coimbra, Faro (26 POIs)
+- Aveiro: 10 POIs, Coimbra: 10 POIs, Faro: 6 POIs (não encontrei 10 com coords reais).
+- Todos com coords reais, `notes` com "Fonte:", 0 inconsistentes na fórmula 2A+2C.
+- Faro: só 6 POIs encontrados (fontes esgotadas em allaboutportugal.pt e Nominatim).
+- Commit: `04b032b` (pushed, CI verde `42053689392`).
+
+### Regra mínima por distrito (OBRIGATÓRIA para Lote 3+)
+1. 10 POIs por distrito.
+2. Pelo menos 6 de 10 com FONTE DE NOME (site oficial, allaboutportugal.pt,
+   cm-X.pt, visitportugal, visitalgarve, tripadvisor).
+3. Máximo 4 com "Fonte: nominatim" — e só para parques municipais sem nome
+   próprio.
+4. Preços: se não publicados online, notes dizem "estimado, confirmar em
+   bilheteira". Nunca valor 0 sem nota.
+5. `hasNursery` / `hasStrollerAccess`: só `true` com excerto URL. Nunca
+   inferido.
+6. Formato de notes por claim: URL + excerto (2-3 linhas) + data de consulta.
+   Se não tens excerto → claim vai para `false`/`0`/`desconhecido`.
+7. `priceFamily = 2×priceAdult + 2×priceChild` (família típica 2A+2C).
+   Quando existe pacote oficial, usar esse valor (documentar nas notes).
+
+### Total POIs em produção
+- Lote 1: 30 (Braga 10, Porto 10, Lisboa 10) + 10 seed = 40 em Braga
+- Lote 2: 26 (Aveiro 10, Coimbra 10, Faro 6)
+- Total: 66 POIs (56 novos + 10 seed)
+- Distritos cobertos: Braga, Porto, Lisboa, Aveiro, Coimbra, Faro (6 de 18+ilhas)
+
+### Próximos passos
+- Lote 3: Leiria, Setúbal, Viana do Castelo (seguir regra mínima acima)
+- Lotes 4-6: interior + ilhas
+- Curadoria editorial: nomes genéricos ("Parque Infantil") precisam de
+  diferenciador; categorias erradas ("Theatro Circo" como `museu`)
+- Faro: tentar encontrar mais 4 POIs com coords reais numa sessão futura

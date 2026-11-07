@@ -154,6 +154,16 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
     return true;
   });
 
+  // "Perto de Ti Agora": abertos primeiro, depois fechados (com badge "Abre às X"),
+  // limitado a 6 cards. Não esconde POIs fechados.
+  const nearYouPois = filteredPois
+    .slice()
+    .sort((a, b) => {
+      if (a.isOpenNow !== b.isOpenNow) return a.isOpenNow ? -1 : 1;
+      return (a.distanceKm ?? 99) - (b.distanceKm ?? 99);
+    })
+    .slice(0, 6);
+
   return (
     <div className="flex flex-col w-full pb-28 pt-2">
       {/* Top Hero Search & Assistant Prompt */}
@@ -380,7 +390,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
         </div>
 
         {/* POI Cards */}
-        {filteredPois.map((poi) => {
+        {nearYouPois.map((poi) => {
           const isFav = favorites.includes(poi.id);
           return (
             <article
@@ -448,9 +458,13 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
                     </span>
                   </div>
 
-                  <span className="font-label-sm text-[11px] bg-surface-container-lowest/95 text-on-surface font-semibold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
-                    {poi.isOpenNow ? 'Aberto Hoje' : 'Encerrado'}
+                  <span className={`font-label-sm text-[11px] bg-surface-container-lowest/95 text-on-surface font-semibold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs ${poi.isOpenNow ? '' : 'opacity-80'}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${poi.isOpenNow ? 'bg-emerald-600' : 'bg-slate-400'}`}></span>
+                    {poi.isOpenNow
+                      ? 'Aberto Hoje'
+                      : (poi.openingHoursToday && poi.openingHoursToday.includes(':')
+                        ? `Abre às ${poi.openingHoursToday.split(' ')[0]}`
+                        : 'Horário: consultar no local')}
                   </span>
                 </div>
               </div>
@@ -498,6 +512,15 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({
             </article>
           );
         })}
+        {filteredPois.length > nearYouPois.length && (
+          <button
+            onClick={onNavigateToMap}
+            className="w-full text-center py-2 text-primary font-semibold text-sm hover:underline"
+            type="button"
+          >
+            Ver todos os {filteredPois.length} locais no mapa →
+          </button>
+        )}
       </section>
 
       {/* Interactive Map Preview Callout */}

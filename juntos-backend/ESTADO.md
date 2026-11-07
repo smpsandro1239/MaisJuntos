@@ -480,3 +480,27 @@ Backend em paridade obrigatória: Worker **e** Express.
 - Curadoria editorial: nomes genéricos ("Parque Infantil") precisam de
   diferenciador; categorias erradas ("Theatro Circo" como `museu`)
 - Faro: tentar encontrar mais 4 POIs com coords reais numa sessão futura
+
+## CICLO 2026-11-07 — isOpenNow + UX "Perto de Ti Agora"
+
+### Diagnóstico
+- Todos os 65 POIs em produção têm `isOpenNow=true` (dados corrigidos nos ciclos anteriores).
+- Frontend `ExploreScreen.tsx`: a section "Perto de Ti Agora" mapeava `filteredPois`
+  (sem filtro por isOpenNow), mas mostrava todos os POIs sem limite.
+- Badge mostrava "Aberto Hoje" ou "Encerrado" (sem horário para fechados).
+
+### Correção UX (ExploreScreen.tsx)
+- `nearYouPois`: ordena abertos primeiro, depois fechados (por distância), limita a 6.
+- Badge fechado: "Abre às HH:MM" (extrai de `openingHoursToday`) ou
+  "Horário: consultar no local" se não houver horário.
+- Botão "Ver todos os X locais no mapa →" quando há mais de 6 POIs.
+- Badge visual: ponto verde (aberto) ou cinzento (fechado).
+
+### Regra isOpenNow por categoria (Lote 4+)
+- `parque`: isOpenNow=true, openingHoursToday='Aberto 24h' (espaço público)
+- `quinta`: isOpenNow depende de horas reais; se desconhecido, isOpenNow=false
+  + openingHoursToday='Consultar site' + notes com URL
+- `museu`, `biblioteca`: isOpenNow depende de openingHoursToday real
+- `hasNursery` / `hasStrollerAccess`: só true com URL nas notes (regra anterior)
+- Se um POI fica com isOpenNow=false, NÃO é escondido da UI; aparece com
+  badge "Abre às X".

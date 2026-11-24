@@ -35,6 +35,19 @@ Plataforma para famílias descobrirem e partilharem atividades infantis e famili
 
 ## Arquitetura
 
+```mermaid
+flowchart LR
+    U[Famílias e Curadores] --> WEB[Frontend React + Vite]
+    WEB -->|HTTP /api| EDGE[Cloudflare Worker + Hono]
+    WEB <-->|WebSocket| EDGE
+    EDGE --> DO[Durable Objects\nRate limit e tempo real]
+    EDGE --> DB[(Turso / libSQL)]
+    EDGE --> MAIL[Serviço de email]
+    ADMIN[Backoffice de curadoria] --> WEB
+```
+
+O diagrama representa os componentes e integrações descritos neste README; não substitui a configuração efetiva de cada ambiente.
+
 | Camada | Produção | Desenvolvimento |
 | --- | --- | --- |
 | Frontend | React 19 + Vite 8 + TypeScript + Tailwind CSS (Vercel) | Vite dev + Express |
@@ -45,6 +58,12 @@ O backend de produção (Worker) e o backend de desenvolvimento (Express) mantê
 **paridade de rotas**. O frontend fala sempre com `/api/*` em caminho relativo; em
 produção o `vercel.json` faz *rewrite* para o Worker (evita CORS). O WebSocket
 aponta diretamente ao Worker (`/ws`), pois o Vercel não faz proxy de WS.
+
+## Demonstração visual
+
+Ainda não existem screenshots versionados neste repositório. A galeria será adicionada quando forem capturadas imagens atuais da aplicação pública e do backoffice, usando dados demonstrativos e sem informação pessoal.
+
+Capturas prioritárias: exploração de atividades e mapa, detalhe de espaço, favoritos/Plano Família e painel de curadoria.
 
 ## Execução local
 
